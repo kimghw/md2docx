@@ -182,11 +182,111 @@ _REGION_ORDER = (
     "neCell", "nwCell", "seCell", "swCell",
 )
 
+# Bitfield decoding for <w:tblLook w:val="XXXX"/>, per ECMA-376.
+_TBLLOOK_BITS = {
+    0x0020: "firstRow",
+    0x0040: "lastRow",
+    0x0080: "firstColumn",
+    0x0100: "lastColumn",
+    0x0200: "noHBand",
+    0x0400: "noVBand",
+}
 
-def applicable_regions(row_i: int, col_j: int, n_rows: int, n_cols: int) -> list[str]:
+
+def _int_child_val(parent, child_tag: str, default: int = 1) -> int:
+    """Read int from <w:child_tag w:val="N"/>. Returns default if missing/invalid."""
+    if parent is None:
+        return default
+    child = parent.find(w(child_tag))
+    if child is None:
+        return default
+    v = child.get(w("val"))
+    if v is None:
+        return default
+    try:
+        return int(v)
+    except ValueError:
+        return default
+
+
+def parse_tbl_look(tblPr) -> dict:
+    """Extract tblLook flags from a <w:tblPr>. Returns dict with 6 booleans.
+
+    Defaults (when <w:tblLook> is absent): all False — no conditional overlays
+    and no banding. When <w:tblLook> is present, individual attributes default
+    to False per ECMA-376; bitfield `w:val` is also decoded."""
+    flags = {"firstRow": False, "lastRow": False, "firstColumn": False,
+             "lastColumn": False, "noHBand": False, "noVBand": False}
+    if tblPr is None:
+        return flags
+    tl = tblPr.find(w("tblLook"))
+    if tl is None:
+        # tblLook entirely absent → treat bands as disabled too
+        flags["noHBand"] = True
+        flags["noVBand"] = True
+        return flags
+    for k in flags:
+        v = tl.get(w(k))
+        if v is not None:
+            flags[k] = v == "1" or v.lower() == "true"
+    val = tl.get(w("val"))
+    if val:
+        try:
+            bits = int(val, 16)
+            for mask, name in _TBLLOOK_BITS.items():
+                if bits & mask:
+                    flags[name] = True
+        except ValueError:
+            pass
+    return flags
+
+
+def applicable_regions(row_i: int, col_j: int, n_rows: int, n_cols: int,
+                       style_regions: set | None = None,
+                       look: dict | None = None,
+                       row_band_size: int = 1,
+                       col_band_size: int = 1) -> list[str]:
+    """Which tblStylePr regions apply to cell (row_i, col_j).
+
+    Horizontal/vertical bands are emitted only when (a) the style chain
+    actually defines band1Horz/band2Horz/band1Vert/band2Vert, and (b) the
+    effective <w:tblLook> does not suppress bands (noHBand/noVBand). The
+    "body" range for banding excludes firstRow/lastRow (resp. firstCol/
+    lastCol) whenever those regions are present in the style."""
+    if style_regions is None:
+        style_regions = set()
+    if look is None:
+        look = {"firstRow": False, "lastRow": False, "firstColumn": False,
+                "lastColumn": False, "noHBand": True, "noVBand": True}
+
     fr, lr = row_i == 0, row_i == n_rows - 1
     fc, lc = col_j == 0, col_j == n_cols - 1
+
+    has_firstRow = "firstRow" in style_regions
+    has_lastRow  = "lastRow"  in style_regions
+    has_firstCol = "firstCol" in style_regions
+    has_lastCol  = "lastCol"  in style_regions
+
     regions = ["wholeTable"]
+
+    h_bands = ("band1Horz" in style_regions) or ("band2Horz" in style_regions)
+    if h_bands and not look.get("noHBand", False):
+        body_start = 1 if has_firstRow else 0
+        body_end   = n_rows - 1 if has_lastRow else n_rows
+        if body_start <= row_i < body_end:
+            rel = row_i - body_start
+            band_idx = (rel // max(1, row_band_size)) % 2
+            regions.append("band1Horz" if band_idx == 0 else "band2Horz")
+
+    v_bands = ("band1Vert" in style_regions) or ("band2Vert" in style_regions)
+    if v_bands and not look.get("noVBand", False):
+        body_start = 1 if has_firstCol else 0
+        body_end   = n_cols - 1 if has_lastCol else n_cols
+        if body_start <= col_j < body_end:
+            rel = col_j - body_start
+            band_idx = (rel // max(1, col_band_size)) % 2
+            regions.append("band1Vert" if band_idx == 0 else "band2Vert")
+
     if fc: regions.append("firstCol")
     if lc: regions.append("lastCol")
     if fr: regions.append("firstRow")
@@ -199,12 +299,20 @@ def applicable_regions(row_i: int, col_j: int, n_rows: int, n_cols: int) -> list
 
 
 def effective_for_cell(resolved: dict, row_i: int, col_j: int,
-                       n_rows: int, n_cols: int) -> tuple:
+                       n_rows: int, n_cols: int,
+                       look: dict | None = None,
+                       row_band_size: int = 1,
+                       col_band_size: int = 1) -> tuple:
     """Compute (effective_pPr, effective_tcPr, effective_trPr) for given position."""
     pPr = copy.deepcopy(resolved["pPr"])
     tcPr = copy.deepcopy(resolved["tcPr"])
     trPr = copy.deepcopy(resolved["trPr"])
-    regions = set(applicable_regions(row_i, col_j, n_rows, n_cols))
+    style_regions = set(resolved["tblStylePr"].keys())
+    regions = set(applicable_regions(
+        row_i, col_j, n_rows, n_cols,
+        style_regions=style_regions, look=look,
+        row_band_size=row_band_size, col_band_size=col_band_size,
+    ))
     for region in _REGION_ORDER:
         if region not in regions:
             continue
@@ -319,16 +427,30 @@ def apply_to_table(tbl, sample_tblPr, sample_tblGrid, resolved: dict,
     insert_at = list(tbl).index(after_tblPr) + 1 if after_tblPr is not None else 0
     tbl.insert(insert_at, new_grid)
 
+    # Effective tblLook + band sizes for conditional-region resolution.
+    # Sample's tblLook overrides the style's (it's what lands on the output);
+    # band sizes live on the style's tblPr (w:tblStyleRowBandSize/ColBandSize),
+    # default 1.
+    look = parse_tbl_look(sample_tblPr if sample_tblPr is not None
+                          and sample_tblPr.find(w("tblLook")) is not None
+                          else resolved.get("tblPr"))
+    row_band = _int_child_val(resolved.get("tblPr"), "tblStyleRowBandSize", 1)
+    col_band = _int_child_val(resolved.get("tblPr"), "tblStyleColBandSize", 1)
+
     n_rows = len(rows)
     for i, row in enumerate(rows):
         cells = row.findall(w("tc"))
         # Effective trPr (position-independent of col): use (i, 0)
-        _, _, eff_trPr = effective_for_cell(resolved, i, 0, n_rows, out_cols)
+        _, _, eff_trPr = effective_for_cell(
+            resolved, i, 0, n_rows, out_cols,
+            look=look, row_band_size=row_band, col_band_size=col_band)
         if eff_trPr is not None and list(eff_trPr):
             replace_child_head(row, w("trPr"), eff_trPr)
 
         for j, tc in enumerate(cells):
-            eff_pPr, eff_tcPr, _ = effective_for_cell(resolved, i, j, n_rows, len(cells))
+            eff_pPr, eff_tcPr, _ = effective_for_cell(
+                resolved, i, j, n_rows, len(cells),
+                look=look, row_band_size=row_band, col_band_size=col_band)
 
             if eff_tcPr is not None and list(eff_tcPr):
                 # Preserve output's <w:tcW> (column width) if present
