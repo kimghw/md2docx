@@ -76,72 +76,83 @@ Pandoc 변환 시 `--reference-doc` 옵션으로 Word 템플릿을 사용할 때
 
 ## 작업 절차
 
-### 1. 실제 참조 중인 스타일 추출
+**원칙**: 복잡한 grep/awk 파이프라인 대신 **unzip으로 XML만 꺼낸 뒤 `Read`·`Grep` 도구로 직접 읽고 판단**한다. 어떤 style ID가 표인지, Pandoc 필수 이름이 있는지는 XML을 눈으로(또는 Grep으로) 확인하면 된다.
 
-`styles.xml`에 정의만 되어 있고 본문에서 쓰지 않는 스타일은 매핑 검증에 필요 없다. **`document.xml`에서 실제로 참조되는 style ID만** 추출하여 (a) 매핑 TSV와 (b) 해당 ID의 실제 `<w:style>` XML 블록을 함께 저장한다. 매핑만 있으면 "어떤 이름인지"는 알지만 "실제 서식이 어떤지"는 모르므로 둘 다 필요하다.
+### 1. docx 압축 해제
 
-출력 경로 (모두 `references/templates/extracted/` 아래):
-- `<basename>.used_mapping.tsv` — 컬럼: `reference<TAB>styleId<TAB>type<TAB>w:name<TAB>count`
-- `<basename>.used_styles.xml` — 참조된 styleId의 `<w:style>` 블록 모음 (테두리·폰트·basedOn 등 실 서식 포함)
+docx는 zip이므로 그대로는 Read 불가. `word/document.xml`과 `word/styles.xml`만 꺼내서 작업 폴더에 둔다.
 
 ```bash
-TPL=your-template.docx
-BASENAME=$(basename "$TPL" .docx)
-OUTDIR=references/templates/extracted
-MAP=$OUTDIR/$BASENAME.used_mapping.tsv
-OUT_XML=$OUTDIR/$BASENAME.used_styles.xml
+TPL="references/templates/your-template.docx"
+OUTDIR="references/templates/extracted/$(basename "$TPL" .docx)"
 mkdir -p "$OUTDIR"
-
-# --- (a) 매핑 TSV ---
-
-# 1) document.xml에서 참조 중인 style ID와 건수
-unzip -p "$TPL" word/document.xml \
-  | grep -oE 'w:(pStyle|rStyle|tblStyle) w:val="[^"]+"' \
-  | sed -E 's/w:(pStyle|rStyle|tblStyle) w:val="([^"]+)"/\1\t\2/' \
-  | sort | uniq -c | awk '{print $2"\t"$3"\t"$1}' > /tmp/used_ids.tsv
-
-# 2) 참조된 ID를 styles.xml과 조인하여 type·w:name 붙이기
-unzip -p "$TPL" word/styles.xml \
-  | grep -oE '<w:style [^>]*w:styleId="[^"]+"[^>]*>[^<]*<w:name w:val="[^"]+"' \
-  | sed -E 's/.*w:type="([^"]+)".*w:styleId="([^"]+)".*<w:name w:val="([^"]+)".*/\2\t\1\t\3/' \
-  | sort > /tmp/defined.tsv
-
-printf 'reference\tstyleId\ttype\tw:name\tcount\n' > "$MAP"
-awk -F'\t' 'NR==FNR{t[$1]=$2; n[$1]=$3; next} {printf "%s\t%s\t%s\t%s\t%s\n", $1, $2, t[$2], n[$2], $3}' \
-  /tmp/defined.tsv /tmp/used_ids.tsv >> "$MAP"
-
-# --- (b) 실제 스타일 XML 블록 ---
-# 주의: grep -oP 는 UTF-8 로케일 필요 (한글 스타일 이름 때문). LC_ALL=C.UTF-8 필수.
-STYLES=$(LC_ALL=C.UTF-8 unzip -p "$TPL" word/styles.xml)
-
-{
-  echo '<?xml version="1.0" encoding="UTF-8"?>'
-  echo '<styles-extracted>'
-  awk -F'\t' 'NR>1 {print $2}' "$MAP" | sort -u | while read -r ID; do
-    echo "<!-- styleId=$ID -->"
-    echo "$STYLES" | LC_ALL=C.UTF-8 grep -oP "<w:style [^>]*w:styleId=\"$ID\"[^>]*>.*?</w:style>"
-    echo
-  done
-  echo '</styles-extracted>'
-} > "$OUT_XML"
-
-cat "$MAP"
+unzip -o "$TPL" word/document.xml word/styles.xml -d "$OUTDIR"
 ```
 
-두 파일을 통해 "어떤 스타일이 쓰였고(TSV), 그 스타일의 실제 서식이 무엇인지(XML)"를 모두 확보할 수 있다. `basedOn`이 가리키는 상위 스타일도 필요하면 TSV의 ID 뒤에 이어 붙여 같은 방식으로 추출한다. 정의된 전체 목록은 저장하지 않는다.
+산출물: `<OUTDIR>/word/document.xml`, `<OUTDIR>/word/styles.xml` — 두 파일만 있으면 이후 판단은 Read/Grep으로 수행.
 
-### 2. 템플릿의 w:name 목록 확인
+### 2. 실제 참조 중인 스타일 ID 찾기 (Grep 도구)
 
-```bash
-unzip -p your-template.docx word/styles.xml | grep -oE '<w:name w:val="[^"]+"' | sort -u
+#### ⚠️ style ID는 불투명 문자열 — 두 파일을 교차 참조해 판단
+
+한글 Word 템플릿의 style ID(`aa`, `10`, `1`, `a3` 등)는 **문자열만 봐서는 표/문단 구분 불가**. docx 내부 두 파일이 서로 다른 정보를 갖고 있으므로 **둘 다 참조해야** 어느 ID가 "실제 사용 중인 표 스타일"인지 확정된다.
+
+| 파일 | 역할 | 제공하는 정보 |
+|---|---|---|
+| `word/document.xml` (본문) | **사용처** — 어디에 쓰이는지 | `<w:tblStyle w:val="aa"/>`처럼 참조하는 자리. 요소 이름(`pStyle`/`rStyle`/`tblStyle`)이 사용 문맥을 암시 |
+| `word/styles.xml` (정의집) | **정체** — 실제 무엇인지 | `<w:style w:type="table" w:styleId="aa">…`의 `w:type` 속성(`paragraph`/`character`/`table`/`numbering`) |
+
+**확정 규칙**: document.xml에서 `w:tblStyle`로 참조되는 ID ∩ styles.xml에서 `w:type="table"`로 정의된 ID = **실제 사용 중인 표 스타일**.
+
+> 한쪽만 맞으면 의심할 것. 예: 정의는 `w:type="table"`인데 문서에서 한 번도 참조 안 됨 → 사용 안 되는 표 스타일. 반대로 참조는 있는데 정의가 없다 → 고아 참조(손상 가능성).
+
+#### 1) document.xml에서 스타일 참조 수집
+
+```
+Grep 패턴: w:(pStyle|rStyle|tblStyle) w:val="[^"]+"
+대상: <OUTDIR>/word/document.xml
+output_mode: content
 ```
 
-출력에서 위 표의 Pandoc 필수 이름들이 존재하는지 확인 (저장은 하지 않음).
+결과 예 (`w:tblStyle` 라인만 추리면 표 참조 후보):
+```
+w:pStyle w:val="1"         ← 문단 참조 후보
+w:tblStyle w:val="aa"      ← 표 참조 후보 (document.xml 근거)
+w:tblStyle w:val="10"      ← 표 참조 후보 (document.xml 근거)
+```
 
-### 3. 누락된 w:name이 있으면 추가/수정
+빈도는 `count` 모드로 확인.
+
+#### 2) styles.xml에서 해당 ID의 `w:type` 확인 → 최종 확정
+
+3단계에서 각 후보 ID의 정의를 열어 `w:type="table"`인지 확인한다. 둘 다 일치하는 ID만 "실제 사용 중인 표 스타일"로 채택.
+
+### 3. 해당 style ID의 실제 정의 확인 (Grep/Read)
+
+2단계에서 얻은 ID들을 `styles.xml`에서 찾아 `w:name`·`basedOn`·`tblBorders` 등 실제 서식을 확인한다.
+
+```
+Grep 패턴: <w:style [^>]*w:styleId="aa"[^>]*>.*?</w:style>
+multiline: true
+대상: <OUTDIR>/word/styles.xml
+output_mode: content
+```
+
+- `type="table"`이면 표 스타일 확정
+- `w:name` 값이 Pandoc 필수 이름 목록([§Pandoc이 찾는 w:name](#pandoc이-찾는-wname-목록))과 일치하는지 점검
+- 특히 `w:name="Table"`이 존재하는지 반드시 확인 (대부분 누락)
+
+### 4. 누락된 w:name이 있으면 추가/수정
 
 - 기존 스타일의 `w:name`을 Pandoc 규격으로 변경하거나
 - 새 스타일을 추가할 때 `basedOn`으로 기존 스타일을 상속시키면 서식이 자동 적용됨
+- 표의 경우 2단계에서 찾은 실제 사용 중인 표 style ID를 `basedOn`으로 지정 (아래 [§표(Table) 스타일](#️-table-스타일--가장-흔한-누락-지점) 참고)
+
+---
+
+### (선택) 요약 TSV로 저장하고 싶을 때
+
+검토 결과를 파일로 남기고 싶으면 `<basename>.used_mapping.tsv`(reference/styleId/type/w:name/count) 형식으로 직접 작성. 자동 생성 스크립트는 불필요 — Grep 결과를 보고 손으로 정리하는 편이 한글 스타일 이름 인코딩 이슈도 피할 수 있음.
 
 ---
 
@@ -178,6 +189,24 @@ unzip -p your-template.docx word/document.xml | grep -oE 'w:tblStyle w:val="[^"]
 ```bash
 unzip -p your-template.docx word/styles.xml | grep -oE '<w:style [^>]*w:styleId="aa"[^>]*>.{0,500}'
 ```
+
+##### ⚠️ 사용 중인 표 스타일이 2개 이상이면 사용자에게 반드시 물어볼 것
+
+Pandoc의 `Table`은 단 하나만 매칭되므로, 템플릿 안에 서로 다른 `w:tblStyle`이 2개 이상 사용 중이면 **LLM이 임의로 고르지 말고 사용자에게 확인한다.**
+
+1. 각 표가 문서 내 **몇 번째 표**인지 (등장 순서), 해당 스타일의 **w:name·테두리·색상·밴드 여부** 등 서식 요약을 제시
+2. "몇 번째 표의 스타일을 Markdown 표의 표준(`Table`의 `basedOn`)으로 사용할지" 명시적으로 질문
+3. 사용자가 선택한 style ID를 `basedOn`으로 설정
+
+제시 예시:
+```
+이 템플릿에는 사용 중인 표 스타일이 2개 있습니다:
+  1번째 표 → styleId=aa (Table Grid): 검정색 굵은 테두리, 제목행 majorHA 폰트
+  2번째 표 → styleId=10 (Plain Table 1): 연회색 얇은 테두리, 밴드행/밴드열
+Markdown의 일반 표(|a|b|)를 몇 번째 표 서식으로 출력할지 골라주세요.
+```
+
+표 스타일 참조가 1개뿐이면 그대로 진행해도 된다.
 
 #### 3단계: 그 스타일을 복제하여 이름만 `Table`로
 
@@ -330,8 +359,9 @@ pandoc input.md `
 
 1. Word에서 원하는 스타일이 적용된 빈 문서 작성 (또는 기존 양식 활용)
 2. 그 파일을 `reference.docx`로 저장
-3. **실제 참조 중인 스타일 추출** (`used_mapping.tsv`) — 수정 전/후 비교 기준
-4. 필수 `w:name` 점검 (특히 `Table`)
-5. `pandoc input.md --reference-doc=reference.docx -o output.docx`
+3. **docx 압축 해제** — `word/document.xml`·`word/styles.xml`만 꺼냄
+4. **Grep 도구로 `w:tblStyle`·`w:pStyle` 참조 확인** → 실제 사용 중인 스타일 ID 파악 (표 여부 포함)
+5. **Grep으로 해당 styleId의 정의 확인** → `w:name`이 Pandoc 규격과 맞는지, 특히 `Table`이 있는지 판단
+6. 누락 있으면 `basedOn`으로 상속시켜 스타일 추가 → `pandoc input.md --reference-doc=reference.docx -o output.docx`
 
 style ID 변경·XML 수술·정규화 같은 복잡한 작업 필요 없음.
