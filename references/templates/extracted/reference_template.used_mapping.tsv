@@ -1,0 +1,9 @@
+reference	styleId	type	w:name	count
+pStyle	1	paragraph	heading 1	1
+pStyle	2	paragraph	heading 2	1
+pStyle	3	paragraph	heading 3	1
+pStyle	4	paragraph	heading 4	1
+pStyle	5	paragraph	heading 5	1
+pStyle	6	paragraph	heading 6	1
+tblStyle	10	table	Plain Table 1	1
+tblStyle	aa	table	Table Grid	1

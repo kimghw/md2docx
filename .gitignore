@@ -1,0 +1,13 @@
+# Word lock files
+~$*
+
+# Backup files
+*.bak
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
