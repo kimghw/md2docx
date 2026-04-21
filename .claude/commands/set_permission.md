@@ -1,0 +1,1 @@
+/mnt/c/shared_wk/claude_toolkit/.claude/commands/set_permission.md
