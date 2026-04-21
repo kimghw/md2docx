@@ -178,7 +178,16 @@
       "Bash(unzip -o \"C:/md2docx/md2docx/references/templates/reference_template.docx\" word/document.xml -d \"C:/md2docx/md2docx/references/templates/extracted/reference_template\")",
       "Bash(mkdir -p .tmp_verify)",
       "Bash(rm -rf .tmp_verify)",
-      "Bash(git rm *)"
+      "Bash(git rm *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(set -e)",
+      "Bash(rm __TRACKED_VAR__/.claude/commands/toolkit_link.md)",
+      "Bash(ln -s __TRACKED_VAR__/.claude/commands/__TRACKED_VAR__ __TRACKED_VAR__/.claude/commands/__TRACKED_VAR__)",
+      "Bash(mkdir -p __TRACKED_VAR__/.claude/skills)",
+      "Bash(ln -s __TRACKED_VAR__/.claude/skills/extract-docx-styles __TRACKED_VAR__/.claude/skills/extract-docx-styles)",
+      "Bash(rm -f __TRACKED_VAR__/.claude/commands/git.md __TRACKED_VAR__/.claude/commands/set_mcp.md __TRACKED_VAR__/.claude/commands/set_permission.md __TRACKED_VAR__/.claude/commands/set_update.md __TRACKED_VAR__/.claude/commands/toolkit_export.md __TRACKED_VAR__/.claude/commands/toolkit_git.md __TRACKED_VAR__/.claude/commands/toolkit_link.md __TRACKED_VAR__/.claude/commands/x_review.md)",
+      "Bash(rm -rf __TRACKED_VAR__/.claude/skills/extract-docx-styles __TRACKED_VAR__/.claude/skills/md-docx-transform)"
     ],
     "defaultMode": "bypassPermissions",
     "additionalDirectories": [
