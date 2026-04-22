@@ -191,6 +191,10 @@ python .claude/skills/extract-docx-styles/tests/inject_and_render.py \
 
 > **왕복 검증 없이는** ② 산출물은 "XML 조각이 잘려 있다" 이상을 주장할 수 없다. 실제 Word 에 적용되는지는 C9 을 거쳐야 안다.
 
+### 2-6. 검증 산출물 위치
+
+`tests/` 디렉터리는 **스크립트 + fixture 만** 둔다. 실제 검증 실행 결과는 `extracted_output/_validate_runs/<fixture>/` 로 저장된다 (즉, 스킬 내부가 아닌 리포 루트의 생성물 디렉터리 하위). 환경변수 `VALIDATE_OUT` 으로 경로 재지정 가능.
+
 ---
 
 ## ③ 시각 프리뷰 (`--preview`) — 육안/에이전트 검증

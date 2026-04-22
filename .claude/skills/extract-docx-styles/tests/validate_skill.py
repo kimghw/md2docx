@@ -32,7 +32,12 @@ if HERE not in sys.path:
 REPO = os.path.abspath(os.path.join(HERE, "..", "..", "..", ".."))
 EXTRACT_PY = os.path.join(HERE, "..", "extract.py")
 FIXTURES = os.path.join(HERE, "fixtures")
-OUTPUTS = os.path.join(HERE, "outputs")
+# Outputs live OUTSIDE the skill's tests/ dir so that dir stays clean
+# (scripts + fixtures only). Override with VALIDATE_OUT env var if needed.
+OUTPUTS = os.environ.get(
+    "VALIDATE_OUT",
+    os.path.join(REPO, "extracted_output", "_validate_runs"),
+)
 TEST_MD = os.path.join(REPO, "test.md")
 
 
