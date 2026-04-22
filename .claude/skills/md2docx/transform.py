@@ -82,6 +82,128 @@ def read_anchor_and_tbllook(sample_xml: str) -> tuple[Optional[str], Optional[st
             t.group(0) if t else None)
 
 
+def extract_tblpr_additions(sample_xml: str) -> dict:
+    """Pull propagatable <w:tblPr> children from sample_table.xml.
+
+    These bits live on each <w:tbl> (not in the style definition) and shape
+    cell geometry — Pandoc doesn't emit them, so we have to copy from template.
+    """
+    out = {}
+    tblpr_m = re.search(r'<w:tblPr\b[^>]*>(.*?)</w:tblPr>', sample_xml, re.S)
+    if not tblpr_m:
+        return out
+    inner = tblpr_m.group(1)
+    for tag in ("tblInd", "tblCellMar", "tblLayout"):
+        m = re.search(
+            rf'<w:{tag}\b[^>]*>.*?</w:{tag}>|<w:{tag}\b[^/]*/>',
+            inner, re.S)
+        if m:
+            out[tag] = m.group(0)
+    return out
+
+
+def apply_tblpr_additions(tbl_body: str, additions: dict) -> str:
+    """Ensure each <w:tblPr> in tbl_body carries the given child elements.
+
+    If an element already exists, it's replaced; otherwise it's appended.
+    """
+    if not additions:
+        return tbl_body
+    tblpr_m = re.search(r'<w:tblPr\b[^>]*>(.*?)</w:tblPr>', tbl_body, re.S)
+    if not tblpr_m:
+        return tbl_body
+    inner = tblpr_m.group(1)
+    for tag, xml in additions.items():
+        pat = rf'<w:{tag}\b[^>]*>.*?</w:{tag}>|<w:{tag}\b[^/]*/>'
+        existing = re.search(pat, inner, re.S)
+        if existing:
+            inner = inner[:existing.start()] + xml + inner[existing.end():]
+        else:
+            inner = inner + xml
+    return tbl_body[:tblpr_m.start(1)] + inner + tbl_body[tblpr_m.end(1):]
+
+
+def extract_cell_formatting(sample_xml: str) -> dict:
+    """Harvest representative cell-level formatting from sample_table.xml.
+
+    Scans every <w:tc> in the sample and pulls the first non-trivial
+    <w:pPr> / <w:rPr> found. The following children are **stripped** before
+    deciding "non-trivial" because they are POSITION-DEPENDENT and must not
+    be broadcast to arbitrary cells:
+      - <w:pStyle>   — may point to a template-only style like "Compact"
+      - <w:cnfStyle> — per-cell conditional formatting marker (firstRow/…) ;
+                      Word auto-derives this from tblLook + actual position
+
+    Returns a dict with 'pPr_inner' and/or 'rPr_inner' — may be absent when
+    the sample cells had nothing reusable.
+    """
+    drop_ppr = re.compile(
+        r'<w:pStyle\s+w:val="[^"]*"\s*/>|<w:cnfStyle\b[^/]*/>')
+    out = {}
+    tcs = re.findall(r'<w:tc\b[^>]*>.*?</w:tc>', sample_xml, re.S)
+    for tc in tcs:
+        if "pPr_inner" not in out:
+            ppr = re.search(r'<w:pPr\b[^>]*>(.*?)</w:pPr>', tc, re.S)
+            if ppr and ppr.group(1).strip():
+                inner = drop_ppr.sub("", ppr.group(1)).strip()
+                if inner:
+                    out["pPr_inner"] = inner
+        if "rPr_inner" not in out:
+            rpr = re.search(r'<w:rPr\b[^>]*>(.*?)</w:rPr>', tc, re.S)
+            if rpr and rpr.group(1).strip():
+                out["rPr_inner"] = rpr.group(1).strip()
+        if "pPr_inner" in out and "rPr_inner" in out:
+            break
+    return out
+
+
+def overwrite_cell_formatting(tbl_body: str, cell_fmt: dict) -> tuple[str, int]:
+    """Hard-overwrite every <w:tc>'s formatting with extracted sample.
+
+    The user's intent: Pandoc's table formatting should be **erased entirely**
+    and replaced with what the template's sample_table.xml provides.  So:
+
+      - <w:tcPr>  → cleared to <w:tcPr/>            (table style's tcPr drives)
+      - <w:pPr>   → replaced with sample pPr_inner  (or removed if none)
+      - <w:rPr>   → replaced with sample rPr_inner  (or removed if none)
+      - inline <w:b/>, <w:i/>, etc. from pandoc ARE stripped — any emphasis
+        must come from the table style (e.g. firstRow), not inline.
+
+    Returns (new_body, cells_overwritten).
+    """
+    cells_overwritten = 0
+    sample_ppr = cell_fmt.get("pPr_inner") or ""
+    sample_rpr = cell_fmt.get("rPr_inner") or ""
+    new_ppr_xml = f"<w:pPr>{sample_ppr}</w:pPr>" if sample_ppr else ""
+    new_rpr_xml = f"<w:rPr>{sample_rpr}</w:rPr>" if sample_rpr else ""
+
+    def _rewrite_tc(m: re.Match) -> str:
+        nonlocal cells_overwritten
+        tc = m.group(0)
+        # 1) nuke any <w:tcPr>…</w:tcPr> or self-closing — replace with empty
+        tc = re.sub(r'<w:tcPr\b[^>]*>.*?</w:tcPr>', '<w:tcPr/>', tc, flags=re.S)
+        tc = re.sub(r'<w:tcPr\b[^/]*/>', '<w:tcPr/>', tc)
+        # If no tcPr at all, insert an empty one at the start of the cell
+        if '<w:tcPr' not in tc:
+            tc = re.sub(r'(<w:tc\b[^>]*>)', r'\1' + '<w:tcPr/>', tc, count=1)
+        # 2) nuke every <w:pPr> and replace with sample pPr (or nothing)
+        tc = re.sub(r'<w:pPr\b[^>]*>.*?</w:pPr>', '', tc, flags=re.S)
+        tc = re.sub(r'<w:pPr\b[^/]*/>', '', tc)
+        if new_ppr_xml:
+            tc = re.sub(r'(<w:p\b[^>]*>)', r'\1' + new_ppr_xml, tc)
+        # 3) nuke every <w:rPr> and replace with sample rPr (or nothing)
+        tc = re.sub(r'<w:rPr\b[^>]*>.*?</w:rPr>', '', tc, flags=re.S)
+        tc = re.sub(r'<w:rPr\b[^/]*/>', '', tc)
+        if new_rpr_xml:
+            tc = re.sub(r'(<w:r\b[^>]*>)', r'\1' + new_rpr_xml, tc)
+        cells_overwritten += 1
+        return tc
+
+    new_body = re.sub(r'<w:tc\b[^>]*>.*?</w:tc>', _rewrite_tc, tbl_body,
+                      flags=re.S)
+    return new_body, cells_overwritten
+
+
 def inject_styles(target_styles_xml: str,
                   donor_blocks: list[tuple[str, str]]) -> str:
     """Merge donor <w:style> blocks into target. Replace if styleId exists, else append."""
@@ -99,13 +221,29 @@ def inject_styles(target_styles_xml: str,
 
 
 def retype_pandoc_tables(doc_xml: str, anchor: str,
-                         tbllook: Optional[str]) -> tuple[str, int]:
-    """Pandoc emits <w:tblStyle w:val="Table"/>. Swap it with `anchor` and
-    ensure <w:tblLook> is set inside each <w:tblPr>. Returns (new_xml, touched_count)."""
+                         tbllook: Optional[str],
+                         tblpr_extras: Optional[dict] = None,
+                         cell_fmt: Optional[dict] = None
+                         ) -> tuple[str, int, int]:
+    """Rewrite Pandoc tables so the template's style wins completely.
+
+    For every <w:tbl>:
+      1) swap <w:tblStyle w:val="Table"/> → <w:tblStyle w:val="{anchor}"/>
+      2) inject/refresh <w:tblLook> so firstRow/firstCol conditional formatting fires
+      3) propagate tblPr children from sample_table.xml (tblInd, tblCellMar, tblLayout)
+      4) **hard-overwrite** every <w:tc>:
+         - strip <w:tcPr>/<w:pPr>/<w:rPr> (including pandoc's Compact pStyle)
+         - replace <w:pPr> / <w:rPr> with sample's harvested contents if any
+         - inline pandoc bold/italic is NOT preserved — emphasis must come
+           from the table style (firstRow, etc.)
+
+    Returns (new_xml, tables_touched, cells_overwritten).
+    """
     touched = 0
+    cells_overwritten = 0
 
     def _replace_tbl(m: re.Match) -> str:
-        nonlocal touched
+        nonlocal touched, cells_overwritten
         open_tag, body, close_tag = m.group(1), m.group(2), m.group(3)
         # Swap tblStyle val — Pandoc emits '<w:tblStyle w:val="Table" />'
         # (with a space before />) so we tolerate optional whitespace.
@@ -140,12 +278,18 @@ def retype_pandoc_tables(doc_xml: str, anchor: str,
                 else:
                     inner = inner + tbllook
                 new_body = new_body[:tblpr_m.start(1)] + inner + new_body[tblpr_m.end(1):]
+        # Propagate tblPr geometry bits (tblInd / tblCellMar / tblLayout)
+        if tblpr_extras:
+            new_body = apply_tblpr_additions(new_body, tblpr_extras)
+        # Hard-overwrite every <w:tc>'s formatting with extracted sample.
+        new_body, n_cells = overwrite_cell_formatting(new_body, cell_fmt or {})
+        cells_overwritten += n_cells
         touched += 1
         return open_tag + new_body + close_tag
 
     new_xml = re.sub(r'(<w:tbl\b[^>]*>)(.*?)(</w:tbl>)', _replace_tbl,
                      doc_xml, flags=re.S)
-    return new_xml, touched
+    return new_xml, touched, cells_overwritten
 
 
 # ---------- inject bundle into a docx ----------
@@ -163,8 +307,11 @@ def inject_bundle(docx_path: str, styles_excerpt_path: str,
     doc_xml = members["word/document.xml"].decode("utf-8")
 
     donor = style_blocks_with_ids(excerpt)
+    tblpr_extras = extract_tblpr_additions(sample)
+    cell_fmt = extract_cell_formatting(sample)
     styles_xml = inject_styles(styles_xml, donor)
-    doc_xml, touched = retype_pandoc_tables(doc_xml, anchor, tbllook)
+    doc_xml, touched, cells_overwritten = retype_pandoc_tables(
+        doc_xml, anchor, tbllook, tblpr_extras, cell_fmt)
 
     members["word/styles.xml"] = styles_xml.encode("utf-8")
     members["word/document.xml"] = doc_xml.encode("utf-8")
@@ -178,6 +325,9 @@ def inject_bundle(docx_path: str, styles_excerpt_path: str,
         "donor_style_ids": [sid for sid, _ in donor if sid],
         "tbllook_copied": tbllook is not None,
         "tables_touched": touched,
+        "tblpr_extras_copied": sorted(tblpr_extras.keys()),
+        "cell_fmt_harvested": sorted(cell_fmt.keys()),
+        "cells_overwritten": cells_overwritten,
     }
 
 
@@ -269,7 +419,10 @@ def main() -> int:
     print(f"      anchor styleId      : {meta['anchor']}")
     print(f"      donor styleIds      : {', '.join(meta['donor_style_ids']) or '-'}")
     print(f"      tblLook copied      : {meta['tbllook_copied']}")
+    print(f"      tblPr extras copied : {', '.join(meta['tblpr_extras_copied']) or '-'}")
+    print(f"      cell fmt harvested  : {', '.join(meta['cell_fmt_harvested']) or '-'}")
     print(f"      <w:tbl> retyped     : {meta['tables_touched']}")
+    print(f"      cells overwritten   : {meta['cells_overwritten']}")
 
     if args.preview:
         print(f"[3/3] render preview")
