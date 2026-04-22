@@ -179,7 +179,7 @@ pandoc input.md --reference-doc=extracted_output/<name>/base_templates/reference
 실행:
 
 ```bash
-python .claude/skills/md2docx-extract-style/tests/inject_and_render.py \
+python .claude/skills/md2docx-extract-style/_tests/inject_and_render.py \
   --extract-out extracted_output/<name>/ \
   --source      references/templates/<template>.docx \
   --out-dir     extracted_output/<name>/c9_inject/
@@ -283,7 +283,7 @@ table      wrote_bundle          true
 
 - **Pandoc 책임 경계** — Pandoc 은 표의 **구조만 변환**하고 **표 스타일은 처리하지 않는다**. md 의 표 → docx 의 `<w:tbl>` (행·열·정렬·내용) 까지만. 테두리·음영·서체·밴딩 같은 서식 지정은 Pandoc 의 업무가 아니다.
 - **Pandoc 의 단락/문자 스타일 매칭**: `w:name` 리터럴. styleId 는 자유. → ① 에서 검증.
-- **Pandoc 의 표 스타일 "매칭" 은 사실상 고정 스텁**: 출력 `document.xml` 에 `<w:tblStyle w:val="Table"/>` 를 **조건 없이** emit. 따라서 reference.docx 에 **`w:styleId="Table"`** 정의가 **있든 없든** Pandoc 은 신경 쓰지 않는다. 서식이 살아나려면 변환 후 별도 주입이 필요하다. (실측: [references/guide_table_style.md](references/guide_table_style.md))
+- **Pandoc 의 표 스타일 "매칭" 은 사실상 고정 스텁**: 출력 `document.xml` 에 `<w:tblStyle w:val="Table"/>` 를 **조건 없이** emit. 따라서 reference.docx 에 **`w:styleId="Table"`** 정의가 **있든 없든** Pandoc 은 신경 쓰지 않는다. 서식이 살아나려면 변환 후 별도 주입이 필요하다. (실측: [references/table-style.md](references/table-style.md))
 - **② 산출물의 역할** — Pandoc 이 맡지 않는 표 스타일을 **후처리 단계**에서 주입할 수 있도록, 원본 템플릿의 `w:style` / `w:tbl` 을 **Pandoc 을 거치지 않고** 그대로 잘라낸다. styleId 와 basedOn 체인만 유지하면 임의 docx 에 이식 가능.
 
 ---
@@ -298,7 +298,6 @@ table      wrote_bundle          true
 
 ## 관련 자료 (스킬 내부 references/)
 
-- [references/guide_table_style.md](references/guide_table_style.md) — Pandoc 표 스타일 매칭 규칙 실측
-- [references/pandoc-reference-docx-guide.md](references/pandoc-reference-docx-guide.md) — reference.docx 운용 가이드
-- [references/pandoc-manual.md](references/pandoc-manual.md) — Pandoc 매뉴얼 발췌
+- [references/table-style.md](references/table-style.md) — OOXML 표 스타일 구조 + Pandoc 표 스타일 매칭 규칙 실측
+- [references/pandoc.md](references/pandoc.md) — Pandoc 일반 사용법 + reference.docx 운용 가이드
 - [references/claude-skill-authoring-guidelines.md](references/claude-skill-authoring-guidelines.md) — 스킬 작성 가이드
