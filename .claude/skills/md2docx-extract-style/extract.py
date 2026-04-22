@@ -47,15 +47,23 @@ def read_zip_text(zpath: str, name: str) -> Optional[str]:
 
 
 # ---------- source normalization ----------
+BASE_TEMPLATES_DIR = "base_templates"
+
+
 def normalize_source(src: str, out_dir: str) -> str:
-    """Copy src to <out_dir>/reference.docx. .dotx is copied as .docx.
+    """Copy src to <out_dir>/base_templates/reference.docx.
+
+    .dotx input is copied as .docx.  `base_templates/` groups reference.docx
+    with its semantic role: a Pandoc --reference-doc base.
 
     Returns the absolute path of the produced reference.docx.
     """
     ext = os.path.splitext(src)[1].lower()
     if ext not in (".docx", ".dotx"):
         raise SystemExit(f"Unsupported input extension: {ext} (expect .docx or .dotx)")
-    dst = os.path.join(out_dir, "reference.docx")
+    base_dir = os.path.join(out_dir, BASE_TEMPLATES_DIR)
+    os.makedirs(base_dir, exist_ok=True)
+    dst = os.path.join(base_dir, "reference.docx")
     shutil.copy2(src, dst)
     if ext == ".dotx":
         print(f"  .dotx detected -> copied as {dst}")

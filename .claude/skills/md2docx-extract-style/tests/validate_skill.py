@@ -165,7 +165,7 @@ def validate_fixture(fixture_name: str, spec: dict) -> Case:
     report = run_extract(fixture, out, preview=True)
 
     # -------- C1: byte equality of reference.docx --------
-    ref = os.path.join(out, "reference.docx")
+    ref = os.path.join(out, "base_templates", "reference.docx")
     case.check("C1 reference.docx byte-identical to source",
                sha256_file(fixture) == sha256_file(ref),
                f"source={sha256_file(fixture)[:12]} ref={sha256_file(ref)[:12]}")
