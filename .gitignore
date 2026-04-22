@@ -12,18 +12,6 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Claude
-.claude/*
-!.claude/settings.local.json
-!.claude/skills/
-.claude/skills/*
-!.claude/skills/extract-docx-styles/
-!.claude/skills/extract-docx-styles/**
-
-# generated outputs
-extracted_output/
-.claude/skills/extract-docx-styles/tests/fixtures/
-.claude/skills/extract-docx-styles/tests/outputs/
 
 # Python
 __pycache__/
