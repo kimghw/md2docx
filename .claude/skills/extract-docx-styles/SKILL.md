@@ -1,16 +1,22 @@
 ---
 name: extract-docx-styles
-description: 단일 Word(.docx/.dotx) 템플릿을 받아 세 가지 산출물을 만든다. (1) Pandoc `--reference-doc=` 으로 그대로 넘길 수 있는 `reference.docx` — 변환 후 스타일 이름 검증 포함. (2) Pandoc 과 무관하게 원본 XML 에서 직접 잘라낸 표(Table) 스타일 스니펫 — 추출 후 basedOn 체인/스타일 ID 검증 포함. (3) `--preview` 옵션 시 source.pdf + 페이지별 PNG (docx2pdf 또는 LibreOffice) — 육안/에이전트 시각 검증용.
+description: 단일 Word(.docx/.dotx) 템플릿을 받아 세 가지 산출물을 만든다. 핵심 전제 — Pandoc 은 표의 **구조만 변환**하고 **표 스타일은 처리하지 않는다**. 그래서 ① 단락/문자 스타일 (Pandoc 이 맡음) 과 ② 표 스타일 (Pandoc 이 손대지 않음, 별도 주입 필요) 을 분리 추출한다. (1) `reference.docx` — Pandoc `--reference-doc=` 용, 변환 후 스타일 이름 검증 포함. (2) 원본 XML 에서 직접 잘라낸 표 스타일 스니펫 — basedOn 체인/styleId 검증 포함. (3) `--preview` 옵션 시 source.pdf + 페이지별 PNG (docx2pdf 또는 LibreOffice) — 육안/에이전트 시각 검증용.
 ---
 
 # extract-docx-styles — 1개 Word 템플릿에서 세 가지를 분리 추출
 
 입력은 Word 템플릿 **한 개** (`.docx` 또는 `.dotx`). 이 한 파일에 대해 **독립된 작업**들을 수행한다. 각 작업은 서로 영향을 주지 않는다.
 
+> **🔑 설계 전제 — Pandoc 책임 경계**
+>
+> Pandoc 의 md → docx 변환은 **표의 구조(행·열·셀·정렬)만 생성**하고 **표 스타일(테두리·음영·서체·음영 밴딩)은 건드리지 않는다.** 출력 `document.xml` 에 `<w:tblStyle w:val="Table"/>` 리터럴을 꽂아둘 뿐, 그 styleId 가 reference.docx 에 실제 존재하는지·어떤 속성을 갖는지는 검증하지 않는다.
+>
+> 그래서 이 스킬은 **① 단락/문자 스타일**(Pandoc 이 `w:name` 으로 매칭하는 부분) 과 **② 표 스타일**(Pandoc 이 손대지 않는 부분) 을 **분리**해 관리한다. ② 는 변환 이후 별도 단계에서 주입해야 한다 — Pandoc 한 번에 끝나지 않는다.
+
 | 작업 | 목적 | 산출물 | Pandoc 관계 | 기본 ON? |
 |---|---|---|---|---|
-| **① reference.docx 준비** | Pandoc 의 `--reference-doc=` 에 바로 쓸 사본 확보 | `reference.docx` | **필요** (매칭 규칙 검증) | ✅ |
-| **② 표 스타일 추출** | 원본 docx 의 `w:style` / `w:tbl` 을 그대로 떼어냄 | `table_style.xml`, `sample_table.xml`, `table_style_bundle/` | **무관** (순수 원본 XML) | ✅ |
+| **① reference.docx 준비** | Pandoc 의 `--reference-doc=` 에 바로 쓸 사본 확보 | `reference.docx` | **쓰임** — 단락/문자 스타일 매칭 규칙 검증 | ✅ |
+| **② 표 스타일 추출** | 원본 docx 의 `w:style` / `w:tbl` 을 그대로 떼어냄 | `table_style.xml`, `sample_table.xml`, `table_style_bundle/` | **무관** — Pandoc 이 표 스타일을 처리하지 않아서 **따로 필요** | ✅ |
 | **③ 시각 프리뷰** | 사람/에이전트가 눈으로 스타일 확인 | `preview/source.pdf`, `preview/source.page-NN.png` | **무관** | ❌ `--preview` 시 |
 
 ---
@@ -110,6 +116,8 @@ pandoc input.md --reference-doc=extracted_output/<name>/reference.docx -o draft.
 
 ## ② 표 스타일 추출 (Pandoc 과 무관) — 추출 후 검증
 
+> **왜 ② 가 별도로 필요한가** — Pandoc 은 md 표를 변환할 때 **표의 구조만 본다**: 행 개수·열 개수·셀 내용·정렬. 표 스타일(테두리 두께·색·음영·첫 행 굵게·첫 열 강조 등) 은 전혀 고려하지 않고, 그저 `<w:tblStyle w:val="Table"/>` 이라는 **고정 리터럴**만 출력에 찍어둔다. 따라서 템플릿 원본이 아무리 예쁜 표 스타일을 정의해도, Pandoc 만 돌려서는 출력 docx 에 그 스타일이 연결되지 않는다. 이 섹션이 제공하는 스니펫을 **변환 후 별도 단계**에서 주입해야 서식이 살아난다.
+
 ### 2-1. 추출 절차 (순수 ZIP + XML 조작)
 
 1. `word/document.xml` 에서 모든 `<w:tbl>...</w:tbl>` 블록을 찾는다.
@@ -145,6 +153,43 @@ pandoc input.md --reference-doc=extracted_output/<name>/reference.docx -o draft.
 3. 대상 표의 셀 배치·테두리까지 복제하려면 `sample_table.xml` 의 `<w:tblPr>`·`<w:tblGrid>` 를 대상 표의 동일 요소에 덮어쓴다.
 
 > 과거 버전에는 `md2docx/clone_table_props.py` 자동 이식 경로가 있었다. 현재 저장소에는 해당 스킬이 없다 — 필요하면 별도 스크립트로 구현.
+
+### 2-5. 실제 재사용 가능성 검증 (C9)
+
+정적 추출만으로는 **"잘라낸 조각이 실제로 Word 표에 적용되는가"** 를 증명할 수 없다. 이를 위해 `tests/inject_and_render.py` 가 **왕복 검증**을 수행한다:
+
+```
+[1] 빈 docx 생성 (python-docx 로 3×3 plain table)
+[2] styles_excerpt.xml 의 <w:style> 블록들을 target 의 styles.xml 에 주입
+    - 동일 styleId 가 있으면 교체, 없으면 </w:styles> 앞에 추가
+[3] 빈 docx 의 <w:tbl> 의 <w:tblPr> 을 다시 씀:
+    - <w:tblStyle w:val="{anchor}"/> 지정
+    - sample_table.xml 의 <w:tblLook> 을 복사해 firstRow/firstCol 활성화
+[4] injected.docx 를 python-docx 로 재오픈 (구조 sanity)
+[5] docx2pdf → PNG 로 렌더 (injected + baseline 두 장)
+[6] 에이전트(Claude vision) 가 두 PNG 의 서식 속성을 비교 판정
+```
+
+**C9 가 검증하는 것**:
+- 추출 번들이 Word 가 열 수 있는 유효한 구조인가 (structural)
+- 주입한 뒤 실제로 렌더에서 테두리·음영이 살아나는가 (visual)
+- 앵커 styleId + basedOn 체인이 **원본과 다른 docx 에서도 해소**되는가 (reusability)
+
+실행:
+
+```bash
+python .claude/skills/extract-docx-styles/tests/inject_and_render.py \
+  --extract-out extracted_output/<name>/ \
+  --source      references/templates/<template>.docx \
+  --out-dir     extracted_output/<name>/c9_inject/
+```
+
+산출물:
+- `c9_inject/injected.docx` — 빈 docx + 주입된 번들 + 앵커 적용된 표
+- `c9_inject/injected.page-NN.png` — 렌더된 PNG
+- `c9_inject/baseline.page-NN.png` — 원본 템플릿 렌더 (비교 기준)
+
+> **왕복 검증 없이는** ② 산출물은 "XML 조각이 잘려 있다" 이상을 주장할 수 없다. 실제 Word 에 적용되는지는 C9 을 거쳐야 안다.
 
 ---
 
@@ -231,9 +276,10 @@ table      wrote_bundle          true
 
 ## 원리 요약
 
-- **Pandoc 의 단락/문자 스타일 매칭**: `w:name` 리터럴. styleId 는 자유.
-- **Pandoc 의 표 스타일 매칭**: 출력 `document.xml` 에 `<w:tblStyle w:val="Table"/>` 를 리터럴로 emit. 따라서 템플릿에 **`w:styleId="Table"`** 정의가 반드시 있어야 서식이 적용된다. (실측: [references/guide_table_style.md](references/guide_table_style.md))
-- **Pandoc 과 무관한 표 스타일 이식**: styleId 와 basedOn 체인만 유지하면 임의 docx 에 그대로 붙여 넣어도 동작. 이 스킬이 제공하는 ② 산출물이 그 재료.
+- **Pandoc 책임 경계** — Pandoc 은 표의 **구조만 변환**하고 **표 스타일은 처리하지 않는다**. md 의 표 → docx 의 `<w:tbl>` (행·열·정렬·내용) 까지만. 테두리·음영·서체·밴딩 같은 서식 지정은 Pandoc 의 업무가 아니다.
+- **Pandoc 의 단락/문자 스타일 매칭**: `w:name` 리터럴. styleId 는 자유. → ① 에서 검증.
+- **Pandoc 의 표 스타일 "매칭" 은 사실상 고정 스텁**: 출력 `document.xml` 에 `<w:tblStyle w:val="Table"/>` 를 **조건 없이** emit. 따라서 reference.docx 에 **`w:styleId="Table"`** 정의가 **있든 없든** Pandoc 은 신경 쓰지 않는다. 서식이 살아나려면 변환 후 별도 주입이 필요하다. (실측: [references/guide_table_style.md](references/guide_table_style.md))
+- **② 산출물의 역할** — Pandoc 이 맡지 않는 표 스타일을 **후처리 단계**에서 주입할 수 있도록, 원본 템플릿의 `w:style` / `w:tbl` 을 **Pandoc 을 거치지 않고** 그대로 잘라낸다. styleId 와 basedOn 체인만 유지하면 임의 docx 에 이식 가능.
 
 ---
 

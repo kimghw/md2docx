@@ -24,3 +24,7 @@ Thumbs.db
 extracted_output/
 .claude/skills/extract-docx-styles/tests/fixtures/
 .claude/skills/extract-docx-styles/tests/outputs/
+
+# Python
+__pycache__/
+*.pyc

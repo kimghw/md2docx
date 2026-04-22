@@ -10,6 +10,8 @@ Checks (per fixture, against expected contract values):
   C6  basedOn chain starts at the anchor and resolves
   C7  Pandoc accepts reference.docx (when test.md is present)
   C8  --preview renders at least one PNG when available
+  C9  inject extracted bundle into a blank docx and render — functional
+      reuse check (structural + produces PNG for agent visual diff)
 
 Run:
   python .claude/skills/extract-docx-styles/tests/validate_skill.py
@@ -25,6 +27,8 @@ import sys
 import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
 REPO = os.path.abspath(os.path.join(HERE, "..", "..", "..", ".."))
 EXTRACT_PY = os.path.join(HERE, "..", "extract.py")
 FIXTURES = os.path.join(HERE, "fixtures")
@@ -236,6 +240,30 @@ def validate_fixture(fixture_name: str, spec: dict) -> Case:
         case.check(f"C8 --preview produced PNG (engine={engine})",
                    len(pngs) >= 1,
                    f"pngs={pngs}")
+
+    # -------- C9: inject bundle into blank docx + render --------
+    if spec["table_count"] > 0:
+        from inject_and_render import run_c9
+        c9_dir = os.path.join(out, "c9_inject")
+        try:
+            r = run_c9(out, fixture, c9_dir)
+            case.check("C9 inject bundle into blank docx opens cleanly",
+                       r.get("structural_ok", False),
+                       r.get("structural_note", ""))
+            case.check("C9 injected docx rendered to PNG",
+                       len(r.get("injected_pngs", [])) >= 1,
+                       r.get("render_error_injected", ""))
+            case.check("C9 baseline fixture rendered to PNG",
+                       len(r.get("baseline_pngs", [])) >= 1,
+                       r.get("render_error_baseline", ""))
+            case.msgs.append(
+                f"  [INFO] C9 PNGs for visual agent diff: "
+                f"{os.path.relpath(r['injected_pngs'][0], HERE) if r.get('injected_pngs') else '?'}"
+                f"  vs  "
+                f"{os.path.relpath(r['baseline_pngs'][0], HERE) if r.get('baseline_pngs') else '?'}"
+            )
+        except Exception as e:
+            case.check("C9 inject pipeline ran without exception", False, str(e))
 
     # -------- extra: multi-sample indices --------
     if "multi_sample_indices" in spec:

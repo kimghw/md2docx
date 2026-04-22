@@ -18,7 +18,13 @@
       "Bash(python .claude/skills/extract-docx-styles/extract.py --doc references/templates/reference_regu.docx --out-dir extracted_output/reference_regu/ --preview)",
       "Bash(python .claude/skills/extract-docx-styles/tests/build_fixtures.py)",
       "Bash(python .claude/skills/extract-docx-styles/tests/validate_skill.py)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(python .claude/skills/extract-docx-styles/extract.py --doc references/templates/reference_reg.docx --out-dir extracted_output/reference_reg/ --preview)",
+      "Bash(pandoc test.md --reference-doc=extracted_output/reference_reg/reference.docx -o extracted_output/reference_reg/draft.docx)",
+      "Bash(python -c ' *)",
+      "Bash(python .claude/skills/extract-docx-styles/tests/inject_and_render.py --extract-out extracted_output/reference_reg/ --source references/templates/reference_reg.docx --out-dir extracted_output/reference_reg/c9_inject/)"
     ],
     "additionalDirectories": [
       "C:\\md2docx\\.claude\\skills\\extract-docx-styles",
