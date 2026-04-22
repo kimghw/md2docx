@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""extract-docx-styles: 단일 Word 템플릿에서 두 산출을 만든다.
+"""extract-docx-styles: 단일 Word 템플릿에서 세 산출을 만든다.
 
   1) reference.docx — Pandoc --reference-doc= 으로 그대로 넘길 사본
   2) 표 스타일 번들 — 다른 docx 에 이식 가능한 XML 스니펫 묶음
+  3) preview/ (선택) — source.pdf + 페이지별 PNG, 육안/에이전트 시각 검증용
 
 Usage:
   python extract.py --doc template.docx --out-dir extracted_output/_styles/
   python extract.py --doc template.dotx --out-dir extracted_output/_styles/
   python extract.py --doc template.docx --out-dir out/ --sample-index 1
+  python extract.py --doc template.docx --out-dir out/ --preview
 """
 from __future__ import annotations
 
@@ -15,6 +17,7 @@ import argparse
 import os
 import re
 import shutil
+import subprocess
 import sys
 import zipfile
 from typing import Optional
@@ -246,8 +249,117 @@ def job_extract_table_style(ref_docx: str, out_dir: str, sample_index: int) -> d
     return result
 
 
+# ---------- preview (docx -> pdf -> png) ----------
+def _render_with_docx2pdf(src_docx: str, out_pdf: str) -> bool:
+    try:
+        from docx2pdf import convert  # type: ignore
+    except Exception:
+        return False
+    try:
+        convert(os.path.abspath(src_docx), os.path.abspath(out_pdf))
+    except Exception as e:
+        print(f"      docx2pdf failed: {e}")
+        return False
+    return os.path.isfile(out_pdf)
+
+
+def _render_with_soffice(src_docx: str, out_pdf: str) -> bool:
+    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    if not soffice:
+        return False
+    out_dir = os.path.dirname(os.path.abspath(out_pdf))
+    try:
+        subprocess.run(
+            [soffice, "--headless", "--convert-to", "pdf", "--outdir", out_dir,
+             os.path.abspath(src_docx)],
+            check=True, capture_output=True,
+        )
+    except Exception as e:
+        print(f"      soffice failed: {e}")
+        return False
+    generated = os.path.join(
+        out_dir, os.path.splitext(os.path.basename(src_docx))[0] + ".pdf"
+    )
+    if os.path.abspath(generated) != os.path.abspath(out_pdf):
+        if os.path.isfile(generated):
+            shutil.move(generated, out_pdf)
+    return os.path.isfile(out_pdf)
+
+
+def render_docx_to_pdf(src_docx: str, out_pdf: str) -> Optional[str]:
+    """Try docx2pdf (Word COM) then soffice. Return engine name or None."""
+    if _render_with_docx2pdf(src_docx, out_pdf):
+        return "docx2pdf"
+    if _render_with_soffice(src_docx, out_pdf):
+        return "soffice"
+    return None
+
+
+def rasterize_pdf(pdf_path: str, out_dir: str, prefix: str, dpi: int = 200) -> list[str]:
+    import fitz  # PyMuPDF
+    doc = fitz.open(pdf_path)
+    out_paths: list[str] = []
+    zoom = dpi / 72.0
+    matrix = fitz.Matrix(zoom, zoom)
+    try:
+        for i in range(doc.page_count):
+            page = doc.load_page(i)
+            pix = page.get_pixmap(matrix=matrix, alpha=False)
+            p = os.path.join(out_dir, f"{prefix}.page-{i + 1:02d}.png")
+            pix.save(p)
+            out_paths.append(p)
+    finally:
+        doc.close()
+    return out_paths
+
+
+def job_preview(ref_docx: str, out_dir: str) -> dict:
+    """Render reference.docx -> PDF -> per-page PNG for visual inspection."""
+    preview_dir = os.path.join(out_dir, "preview")
+    os.makedirs(preview_dir, exist_ok=True)
+    result = {
+        "attempted": True,
+        "engine": None,
+        "pdf_path": None,
+        "png_paths": [],
+        "note": None,
+    }
+
+    pdf_path = os.path.join(preview_dir, "source.pdf")
+    engine = render_docx_to_pdf(ref_docx, pdf_path)
+    if engine is None:
+        result["note"] = "no PDF renderer available (need MS Word or LibreOffice)"
+        return result
+    result["engine"] = engine
+    result["pdf_path"] = pdf_path
+
+    try:
+        result["png_paths"] = rasterize_pdf(pdf_path, preview_dir, "source")
+    except ModuleNotFoundError:
+        result["note"] = "PyMuPDF (fitz) not installed — run: pip install pymupdf"
+        return result
+    except Exception as e:
+        result["note"] = f"rasterize failed: {e}"
+        return result
+
+    # index file
+    index_path = os.path.join(preview_dir, "preview_report.md")
+    with open(index_path, "w", encoding="utf-8") as f:
+        f.write("# preview report\n\n")
+        f.write(f"- source: `{os.path.basename(ref_docx)}`\n")
+        f.write(f"- engine: `{engine}`\n")
+        f.write(f"- pdf: `{os.path.basename(pdf_path)}`\n")
+        f.write(f"- pages: {len(result['png_paths'])}\n\n")
+        f.write("## rendered pages\n\n")
+        for p in result["png_paths"]:
+            rel = os.path.relpath(p, preview_dir)
+            f.write(f"- ![{os.path.basename(p)}]({rel})\n")
+    return result
+
+
 # ---------- reporting ----------
-def write_report(out_dir: str, ref_res: dict, tbl_res: dict, src: str) -> str:
+def write_report(out_dir: str, ref_res: dict, tbl_res: dict, src: str,
+                 preview_res: Optional[dict] = None) -> str:
     path = os.path.join(out_dir, "report.tsv")
     lines = [
         "section\tkey\tvalue",
@@ -266,6 +378,14 @@ def write_report(out_dir: str, ref_res: dict, tbl_res: dict, src: str) -> str:
         f"table\twrote_table_style\t{str(tbl_res['wrote_table_style']).lower()}",
         f"table\twrote_bundle\t{str(tbl_res['wrote_bundle']).lower()}",
     ]
+    if preview_res is not None:
+        lines.extend([
+            f"preview\tattempted\t{str(preview_res['attempted']).lower()}",
+            f"preview\tengine\t{preview_res['engine'] or '-'}",
+            f"preview\tpdf_path\t{preview_res['pdf_path'] or '-'}",
+            f"preview\tpage_count\t{len(preview_res['png_paths'])}",
+            f"preview\tnote\t{preview_res['note'] or '-'}",
+        ])
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     return path
@@ -312,6 +432,21 @@ def print_summary(src: str, out_dir: str, ref_res: dict, tbl_res: dict) -> None:
         print(f"      wrote {name:25s} {'yes' if ok else 'no'}")
 
 
+def print_preview_summary(preview_res: Optional[dict]) -> None:
+    if preview_res is None:
+        return
+    print()
+    print("[3/3] Visual preview (--preview)")
+    if preview_res["engine"] is None:
+        print(f"      engine              : FAILED — {preview_res['note']}")
+        return
+    print(f"      engine              : {preview_res['engine']}")
+    print(f"      pdf                 : {preview_res['pdf_path']}")
+    print(f"      rasterized pages    : {len(preview_res['png_paths'])}")
+    if preview_res["note"]:
+        print(f"      note                : {preview_res['note']}")
+
+
 # ---------- CLI ----------
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
@@ -321,6 +456,9 @@ def main() -> int:
                     help="Output directory; created if missing")
     ap.add_argument("--sample-index", type=int, default=0,
                     help="Which <w:tbl> to extract as sample_table.xml (default 0)")
+    ap.add_argument("--preview", action="store_true",
+                    help="Also render reference.docx -> PDF -> per-page PNG "
+                         "into out_dir/preview/ (needs MS Word or LibreOffice)")
     args = ap.parse_args()
 
     if not os.path.isfile(args.doc):
@@ -334,8 +472,14 @@ def main() -> int:
     ref_res = job_prepare_reference(ref_docx)
     tbl_res = job_extract_table_style(ref_docx, args.out_dir, args.sample_index)
 
-    report_path = write_report(args.out_dir, ref_res, tbl_res, args.doc)
+    preview_res = None
+    if args.preview:
+        print("      rendering preview (this may take a few seconds) ...")
+        preview_res = job_preview(ref_docx, args.out_dir)
+
+    report_path = write_report(args.out_dir, ref_res, tbl_res, args.doc, preview_res)
     print_summary(args.doc, args.out_dir, ref_res, tbl_res)
+    print_preview_summary(preview_res)
     print()
     print(f"[report] {report_path}")
     return 0
