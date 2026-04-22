@@ -15,3 +15,7 @@ Thumbs.db
 # Claude
 .claude/*
 !.claude/settings.local.json
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/extract-docx-styles/
+!.claude/skills/extract-docx-styles/**
