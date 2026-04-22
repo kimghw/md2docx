@@ -5,9 +5,11 @@
   2) 표 스타일 번들 — 다른 docx 에 이식 가능한 XML 스니펫 묶음
   3) preview/ (선택) — source.pdf + 페이지별 PNG, 육안/에이전트 시각 검증용
 
+산출물은 <out-dir>/<source 파일 이름(확장자 제외)>/ 아래에 쌓인다.
+
 Usage:
-  python extract.py --doc template.docx --out-dir extracted_output/_styles/
-  python extract.py --doc template.dotx --out-dir extracted_output/_styles/
+  python extract.py --doc template.docx --out-dir extracted_output/
+  python extract.py --doc template.dotx --out-dir extracted_output/
   python extract.py --doc template.docx --out-dir out/ --sample-index 1
   python extract.py --doc template.docx --out-dir out/ --preview
 """
@@ -163,9 +165,8 @@ def job_extract_table_style(ref_docx: str, out_dir: str, sample_index: int) -> d
         "sample_style_id": None,
         "has_style_Table": False,
         "chain": [],
-        "wrote_sample_table": False,
+        "wrote_table_sources": False,
         "wrote_table_style": False,
-        "wrote_bundle": False,
     }
 
     # Is there a styleId="Table" definition?
@@ -181,20 +182,22 @@ def job_extract_table_style(ref_docx: str, out_dir: str, sample_index: int) -> d
             f"--sample-index {sample_index} out of range (found {len(tables)} tables)"
         )
 
-    sample = tables[sample_index].group(0)
-    sid = table_style_id(sample)
+    source_tbl = tables[sample_index].group(0)
+    sid = table_style_id(source_tbl)
     result["sample_style_id"] = sid
 
-    # sample_table.xml
-    sample_path = os.path.join(out_dir, "sample_table.xml")
-    with open(sample_path, "w", encoding="utf-8") as f:
+    # table_sources.xml — the actual <w:tbl> instance extracted from the
+    # original template (not Pandoc output).  Used as a donor for
+    # <w:tblLook>, <w:tblGrid>, and cell-level formatting during injection.
+    sources_path = os.path.join(out_dir, "table_sources.xml")
+    with open(sources_path, "w", encoding="utf-8") as f:
         f.write('<?xml version="1.0" encoding="UTF-8"?>\n')
         f.write(
-            '<!-- sample <w:tbl> extracted from ' + os.path.basename(ref_docx)
+            '<!-- source <w:tbl> extracted from ' + os.path.basename(ref_docx)
             + ' (index ' + str(sample_index) + ') -->\n'
         )
-        f.write(sample)
-    result["wrote_sample_table"] = True
+        f.write(source_tbl)
+    result["wrote_table_sources"] = True
 
     # Resolve style chain (prefer explicit "Table" then sample's own tblStyle).
     anchor = None
@@ -205,29 +208,19 @@ def job_extract_table_style(ref_docx: str, out_dir: str, sample_index: int) -> d
     if anchor:
         result["chain"] = walk_basedon_chain(styles, anchor)
 
-    # table_style.xml  — the anchor style block only
-    if anchor:
-        anchor_block = find_style_block(styles, anchor)
-        if anchor_block:
-            style_path = os.path.join(out_dir, "table_style.xml")
-            with open(style_path, "w", encoding="utf-8") as f:
-                f.write('<?xml version="1.0" encoding="UTF-8"?>\n')
-                f.write('<!-- w:style block for ' + anchor + ' -->\n')
-                f.write(anchor_block)
-            result["wrote_table_style"] = True
-
-    # bundle/styles_excerpt.xml  — every style in the basedOn chain
+    # table_style.xml — anchor style + every parent on the basedOn chain,
+    # wrapped in a single <styles-excerpt> element.  This is the definition
+    # side of the extraction: transplant these <w:style> blocks into the
+    # target docx's word/styles.xml (before </w:styles>) to light up the
+    # table style.  Keep styleId values as-is so basedOn pointers resolve.
     if result["chain"]:
-        bundle_dir = os.path.join(out_dir, "table_style_bundle")
-        os.makedirs(bundle_dir, exist_ok=True)
-
         pieces = []
         for sid_in_chain in result["chain"]:
             b = find_style_block(styles, sid_in_chain)
             if b:
                 pieces.append(b)
-        excerpt_path = os.path.join(bundle_dir, "styles_excerpt.xml")
-        with open(excerpt_path, "w", encoding="utf-8") as f:
+        style_path = os.path.join(out_dir, "table_style.xml")
+        with open(style_path, "w", encoding="utf-8") as f:
             f.write('<?xml version="1.0" encoding="UTF-8"?>\n')
             f.write(
                 '<styles-excerpt anchor="' + anchor + '" '
@@ -236,23 +229,7 @@ def job_extract_table_style(ref_docx: str, out_dir: str, sample_index: int) -> d
             for p in pieces:
                 f.write(p + "\n")
             f.write('</styles-excerpt>\n')
-
-        readme_path = os.path.join(bundle_dir, "README.txt")
-        with open(readme_path, "w", encoding="utf-8") as f:
-            f.write(
-                "table_style_bundle — how to transplant\n"
-                "======================================\n\n"
-                "anchor styleId : " + anchor + "\n"
-                "basedOn chain  : " + " -> ".join(result["chain"]) + "\n\n"
-                "Option A (recommended): run md2docx/clone_table_props.py with\n"
-                "  --template <this reference.docx> --target <other.docx>\n\n"
-                "Option B (manual): open the target .docx's word/styles.xml and\n"
-                "paste every <w:style> block from styles_excerpt.xml just before\n"
-                "</w:styles>. Keep the styleId values exactly as-is so basedOn\n"
-                "pointers still resolve. For the cell layout, copy <w:tblPr> and\n"
-                "<w:tblGrid> from sample_table.xml into the target table.\n"
-            )
-        result["wrote_bundle"] = True
+        result["wrote_table_style"] = True
 
     return result
 
@@ -382,9 +359,8 @@ def write_report(out_dir: str, ref_res: dict, tbl_res: dict, src: str,
         f"table\tsample_style_id\t{tbl_res['sample_style_id'] or '-'}",
         f"table\thas_style_Table\t{str(tbl_res['has_style_Table']).lower()}",
         f"table\tbasedOn_chain\t{' -> '.join(tbl_res['chain']) or '-'}",
-        f"table\twrote_sample_table\t{str(tbl_res['wrote_sample_table']).lower()}",
+        f"table\twrote_table_sources\t{str(tbl_res['wrote_table_sources']).lower()}",
         f"table\twrote_table_style\t{str(tbl_res['wrote_table_style']).lower()}",
-        f"table\twrote_bundle\t{str(tbl_res['wrote_bundle']).lower()}",
     ]
     if preview_res is not None:
         lines.extend([
@@ -432,9 +408,8 @@ def print_summary(src: str, out_dir: str, ref_res: dict, tbl_res: dict) -> None:
     if tbl_res["chain"]:
         print(f"      basedOn chain       : {' -> '.join(tbl_res['chain'])}")
     wrote = [
-        ("sample_table.xml", tbl_res["wrote_sample_table"]),
-        ("table_style.xml",  tbl_res["wrote_table_style"]),
-        ("table_style_bundle/", tbl_res["wrote_bundle"]),
+        ("table_sources.xml", tbl_res["wrote_table_sources"]),
+        ("table_style.xml",   tbl_res["wrote_table_style"]),
     ]
     for name, ok in wrote:
         print(f"      wrote {name:25s} {'yes' if ok else 'no'}")
@@ -461,9 +436,10 @@ def main() -> int:
     ap.add_argument("--doc", required=True,
                     help="Input Word template (.docx or .dotx)")
     ap.add_argument("--out-dir", required=True,
-                    help="Output directory; created if missing")
+                    help="Parent output dir; actual output goes to "
+                         "<out-dir>/<source_stem>/ (created if missing)")
     ap.add_argument("--sample-index", type=int, default=0,
-                    help="Which <w:tbl> to extract as sample_table.xml (default 0)")
+                    help="Which <w:tbl> to extract as table_sources.xml (default 0)")
     ap.add_argument("--preview", action="store_true",
                     help="Also render reference.docx -> PDF -> per-page PNG "
                          "into out_dir/preview/ (needs MS Word or LibreOffice)")
@@ -472,21 +448,25 @@ def main() -> int:
     if not os.path.isfile(args.doc):
         raise SystemExit(f"input not found: {args.doc}")
 
-    os.makedirs(args.out_dir, exist_ok=True)
+    # Actual output goes under <out-dir>/<source_stem>/ so that multiple
+    # templates can share a single parent dir without colliding.
+    source_stem = os.path.splitext(os.path.basename(args.doc))[0]
+    out_dir = os.path.join(args.out_dir, source_stem)
+    os.makedirs(out_dir, exist_ok=True)
 
-    print("[0] Copy to reference.docx ...")
-    ref_docx = normalize_source(args.doc, args.out_dir)
+    print(f"[0] Copy to reference.docx  ({out_dir}) ...")
+    ref_docx = normalize_source(args.doc, out_dir)
 
     ref_res = job_prepare_reference(ref_docx)
-    tbl_res = job_extract_table_style(ref_docx, args.out_dir, args.sample_index)
+    tbl_res = job_extract_table_style(ref_docx, out_dir, args.sample_index)
 
     preview_res = None
     if args.preview:
         print("      rendering preview (this may take a few seconds) ...")
-        preview_res = job_preview(ref_docx, args.out_dir)
+        preview_res = job_preview(ref_docx, out_dir)
 
-    report_path = write_report(args.out_dir, ref_res, tbl_res, args.doc, preview_res)
-    print_summary(args.doc, args.out_dir, ref_res, tbl_res)
+    report_path = write_report(out_dir, ref_res, tbl_res, args.doc, preview_res)
+    print_summary(args.doc, out_dir, ref_res, tbl_res)
     print_preview_summary(preview_res)
     print()
     print(f"[report] {report_path}")

@@ -5,7 +5,7 @@ Checks (per fixture, against expected contract values):
   C1  reference.docx is byte-identical to the source docx
   C2  missing_required reflects actual styles.xml state
   C3  has_style_Table matches expected
-  C4  sample_table.xml equals the N-th <w:tbl> in document.xml
+  C4  table_sources.xml equals the N-th <w:tbl> in document.xml
   C5  table_style.xml contains the anchor <w:style> block
   C6  basedOn chain starts at the anchor and resolves
   C7  Pandoc accepts reference.docx (when test.md is present)
@@ -100,13 +100,17 @@ def parse_report(tsv: str) -> dict:
     return data
 
 
-def run_extract(fixture: str, out_dir: str, preview: bool = False,
-                sample_index: int = 0) -> dict:
-    if os.path.isdir(out_dir):
-        shutil.rmtree(out_dir)
+def run_extract(fixture: str, parent_dir: str, preview: bool = False,
+                sample_index: int = 0) -> tuple[str, dict]:
+    """Run extract.py with parent_dir as --out-dir; actual output lands in
+    parent_dir/<source_stem>/. Returns (actual_out_dir, parsed_report)."""
+    source_stem = os.path.splitext(os.path.basename(fixture))[0]
+    actual_out = os.path.join(parent_dir, source_stem)
+    if os.path.isdir(actual_out):
+        shutil.rmtree(actual_out)
     args = [sys.executable, EXTRACT_PY,
             "--doc", fixture,
-            "--out-dir", out_dir,
+            "--out-dir", parent_dir,
             "--sample-index", str(sample_index)]
     if preview:
         args.append("--preview")
@@ -116,7 +120,7 @@ def run_extract(fixture: str, out_dir: str, preview: bool = False,
         print(r.stdout)
         print(r.stderr)
         raise RuntimeError(f"extract.py failed: {fixture}")
-    return parse_report(os.path.join(out_dir, "report.tsv"))
+    return actual_out, parse_report(os.path.join(actual_out, "report.tsv"))
 
 
 def find_nth_tbl(doc_xml: str, n: int) -> str:
@@ -159,10 +163,11 @@ class Case:
 def validate_fixture(fixture_name: str, spec: dict) -> Case:
     case = Case(fixture_name)
     fixture = os.path.join(FIXTURES, fixture_name)
-    out = os.path.join(OUTPUTS, fixture_name.replace(".docx", ""))
 
-    # Run extract with --preview so C8 works in one shot
-    report = run_extract(fixture, out, preview=True)
+    # Run extract with --preview so C8 works in one shot.
+    # extract.py auto-creates <parent>/<source_stem>/, so we pass OUTPUTS
+    # as parent and receive the actual output path back.
+    out, report = run_extract(fixture, OUTPUTS, preview=True)
 
     # -------- C1: byte equality of reference.docx --------
     ref = os.path.join(out, "base_templates", "reference.docx")
@@ -188,18 +193,18 @@ def validate_fixture(fixture_name: str, spec: dict) -> Case:
                f"got {report.get('table.table_count')!r}")
 
     if spec["table_count"] > 0:
-        # -------- C4: sample_table.xml equals N-th <w:tbl> --------
+        # -------- C4: table_sources.xml equals N-th <w:tbl> --------
         doc_xml = read_zip_text(fixture, "word/document.xml")
-        sample_on_disk = open(os.path.join(out, "sample_table.xml"),
-                              encoding="utf-8").read()
+        sources_on_disk = open(os.path.join(out, "table_sources.xml"),
+                               encoding="utf-8").read()
         # strip xml header + comment line
-        sample_body = re.sub(r'^<\?xml[^>]*\?>\s*', "", sample_on_disk)
-        sample_body = re.sub(r'^<!--.*?-->\s*', "", sample_body,
-                             flags=re.DOTALL).strip()
+        sources_body = re.sub(r'^<\?xml[^>]*\?>\s*', "", sources_on_disk)
+        sources_body = re.sub(r'^<!--.*?-->\s*', "", sources_body,
+                              flags=re.DOTALL).strip()
         expected = find_nth_tbl(doc_xml, 0)
-        case.check("C4 sample_table.xml matches document.xml[0]",
-                   sample_body == expected,
-                   f"len(got)={len(sample_body)} len(want)={len(expected)}")
+        case.check("C4 table_sources.xml matches document.xml[0]",
+                   sources_body == expected,
+                   f"len(got)={len(sources_body)} len(want)={len(expected)}")
 
         # -------- C5: table_style.xml contains anchor <w:style> block --------
         styles_xml = read_zip_text(fixture, "word/styles.xml")
@@ -274,16 +279,17 @@ def validate_fixture(fixture_name: str, spec: dict) -> Case:
     if "multi_sample_indices" in spec:
         doc_xml = read_zip_text(fixture, "word/document.xml")
         for idx in spec["multi_sample_indices"]:
-            alt_out = os.path.join(OUTPUTS, f"{fixture_name}-sample{idx}")
-            run_extract(fixture, alt_out, preview=False, sample_index=idx)
-            sample_body = open(os.path.join(alt_out, "sample_table.xml"),
-                               encoding="utf-8").read()
-            sample_body = re.sub(r'^<\?xml[^>]*\?>\s*', "", sample_body)
-            sample_body = re.sub(r'^<!--.*?-->\s*', "", sample_body,
-                                 flags=re.DOTALL).strip()
+            alt_parent = os.path.join(OUTPUTS, f"__sample{idx}")
+            alt_out, _ = run_extract(fixture, alt_parent, preview=False,
+                                     sample_index=idx)
+            sources_body = open(os.path.join(alt_out, "table_sources.xml"),
+                                encoding="utf-8").read()
+            sources_body = re.sub(r'^<\?xml[^>]*\?>\s*', "", sources_body)
+            sources_body = re.sub(r'^<!--.*?-->\s*', "", sources_body,
+                                  flags=re.DOTALL).strip()
             expected = find_nth_tbl(doc_xml, idx)
             case.check(f"multi --sample-index {idx} matches document.xml[{idx}]",
-                       sample_body == expected, "")
+                       sources_body == expected, "")
     return case
 
 

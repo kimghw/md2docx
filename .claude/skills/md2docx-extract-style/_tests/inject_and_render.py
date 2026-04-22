@@ -2,13 +2,13 @@
 """C9 — inject extracted table styles into a blank docx and render both.
 
 Inputs:
-  - extract_out_dir  : dir with table_style_bundle/styles_excerpt.xml +
-                       sample_table.xml (from extract.py)
+  - extract_out_dir  : dir with table_style.xml + table_sources.xml
+                       (from extract.py)
   - out_dir          : where injected.docx + its PDF/PNG go
 
 What it does:
   1) Build a blank docx with a single 3x3 plain table (python-docx).
-  2) Inject all <w:style> blocks from styles_excerpt.xml into its
+  2) Inject all <w:style> blocks from table_style.xml into its
      word/styles.xml (replace if the styleId already exists, else append
      before </w:styles>).
   3) Set the table's <w:tblPr> to reference the anchor styleId and copy
@@ -79,14 +79,14 @@ def build_blank_docx(path: str) -> None:
 
 
 # ---- core: inject + restyle ----
-def read_anchor_and_tbllook(sample_table_xml: str) -> tuple[Optional[str], Optional[str]]:
+def read_anchor_and_tbllook(sources_xml: str) -> tuple[Optional[str], Optional[str]]:
     """Extract anchor styleId and the <w:tblLook .../> element."""
     anchor = None
-    m = re.search(r'<w:tblStyle\s+w:val="([^"]*)"', sample_table_xml)
+    m = re.search(r'<w:tblStyle\s+w:val="([^"]*)"', sources_xml)
     if m:
         anchor = m.group(1)
     tbllook = None
-    m = re.search(r'<w:tblLook\b[^/]*/>', sample_table_xml)
+    m = re.search(r'<w:tblLook\b[^/]*/>', sources_xml)
     if m:
         tbllook = m.group(0)
     return anchor, tbllook
@@ -134,14 +134,14 @@ def restyle_first_table(doc_xml: str, anchor: str, tbllook: Optional[str]) -> st
 
 
 def inject_bundle_into_docx(blank_docx: str, out_docx: str,
-                            styles_excerpt_path: str,
-                            sample_table_path: str) -> dict:
+                            table_style_path: str,
+                            table_sources_path: str) -> dict:
     """Produce out_docx = blank_docx + injected table style + retyped table."""
-    excerpt = open(styles_excerpt_path, encoding="utf-8").read()
-    sample = open(sample_table_path, encoding="utf-8").read()
-    anchor, tbllook = read_anchor_and_tbllook(sample)
+    excerpt = open(table_style_path, encoding="utf-8").read()
+    sources = open(table_sources_path, encoding="utf-8").read()
+    anchor, tbllook = read_anchor_and_tbllook(sources)
     if not anchor:
-        raise RuntimeError("no anchor styleId in sample_table.xml")
+        raise RuntimeError("no anchor styleId in table_sources.xml")
 
     donor_blocks = style_blocks_with_ids(excerpt)
 
@@ -200,10 +200,9 @@ def run_c9(extract_out: str, source_docx: str, out_dir: str) -> dict:
 
     build_blank_docx(blank)
 
-    excerpt_path = os.path.join(extract_out, "table_style_bundle",
-                                "styles_excerpt.xml")
-    sample_path = os.path.join(extract_out, "sample_table.xml")
-    meta = inject_bundle_into_docx(blank, injected, excerpt_path, sample_path)
+    table_style_path = os.path.join(extract_out, "table_style.xml")
+    sources_path = os.path.join(extract_out, "table_sources.xml")
+    meta = inject_bundle_into_docx(blank, injected, table_style_path, sources_path)
 
     ok, note = verify_structural(injected)
     meta["structural_ok"] = ok

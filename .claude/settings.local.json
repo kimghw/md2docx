@@ -36,7 +36,8 @@
       "Bash(python .claude/skills/md2docx/transform.py --md test.md --extract-out extracted_output/reference_reg/ --out extracted_output/reference_reg/final.docx --preview)",
       "Bash(python .claude/skills/md2docx-extract-style/extract.py --doc references/templates/reference_reg.docx --out-dir extracted_output/reference_reg/)",
       "Bash(rm c:/md2docx/.claude/skills/md2docx-extract-style/references/guide_table_style.md c:/md2docx/.claude/skills/md2docx-extract-style/references/pandoc-manual.md c:/md2docx/.claude/skills/md2docx-extract-style/references/pandoc-reference-docx-guide.md)",
-      "Bash(cp c:/md2docx/references/pandoc.md c:/md2docx/references/table-style.md c:/md2docx/.claude/skills/md2docx-extract-style/references/)"
+      "Bash(cp c:/md2docx/references/pandoc.md c:/md2docx/references/table-style.md c:/md2docx/.claude/skills/md2docx-extract-style/references/)",
+      "Bash(python c:/md2docx/.claude/skills/md2docx-extract-style/extract.py --doc c:/md2docx/references/templates/reference_reg.docx --out-dir c:/md2docx/extracted_output/)"
     ],
     "additionalDirectories": [
       "C:\\md2docx\\.claude\\skills\\extract-docx-styles",

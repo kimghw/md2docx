@@ -320,12 +320,12 @@ OOXML 기준 ([ECMA-376 Part 1 §17.7.4.5](https://ecma-international.org/public
 |---|---|
 | 템플릿 작성자가 스타일에 **전부** 담아 놓은 경우 | ✅ 충분 |
 | 본문 셀 서식을 Normal 상속에 맡긴 경우 (위의 aa) | ✅ 충분 (Normal 도 함께 가져가면 됨) |
-| 셀마다 **인라인 서식** (pStyle/rPr) 을 박아 놓은 경우 | ⚠️ 스타일만으로 부족, `sample_table.xml` 의 `<w:tc>` 에서 추가 추출 필요 |
+| 셀마다 **인라인 서식** (pStyle/rPr) 을 박아 놓은 경우 | ⚠️ 스타일만으로 부족, `table_sources.xml` 의 `<w:tc>` 에서 추가 추출 필요 |
 
 현재 스킬 설계:
 - `md2docx-extract-style` 이 **두 덩어리 모두 뽑음**:
-  - `table_style_bundle/styles_excerpt.xml` — 스타일 계층 (주된 정보)
-  - `sample_table.xml` — 실제 셀 XML 스냅샷 (보충용, 인라인 서식이 있을 때 대비)
+  - `table_style.xml` — 스타일 계층 (앵커 + basedOn 체인, `<styles-excerpt>` 래퍼)
+  - `table_sources.xml` — 실제 셀 XML 스냅샷 (보충용, 인라인 서식이 있을 때 대비)
 - `md2docx` 가 사용할 때:
   - 스타일은 `styles.xml` 에 병합해서 **자동 적용**
   - pandoc 의 `pStyle="Compact"` 는 제거해서 스타일 계층이 먹도록 해제
@@ -344,7 +344,7 @@ OOXML 기준 ([ECMA-376 Part 1 §17.7.4.5](https://ecma-international.org/public
 | `<w:tblW>` | 표 전체 폭 지정 방식 (dxa / pct / auto) | 표마다 다름 |
 | `<w:gridSpan>` / `<w:vMerge>` | 셀 병합 정보 | 데이터 구조 |
 
-→ 이들은 **표마다 고유**. 스타일에는 못 담음. `sample_table.xml` 이 유일한 재료.
+→ 이들은 **표마다 고유**. 스타일에는 못 담음. `table_sources.xml` 이 유일한 재료.
 
 ---
 

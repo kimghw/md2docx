@@ -10,11 +10,10 @@
         리터럴만 박아둠 → 이대로는 서식 미적용
 
   [2] 표 스타일 주입 (핵심)
-      <extract_out>/table_style_bundle/styles_excerpt.xml 의 <w:style> 블록들을
-      출력 docx 의 word/styles.xml 에 병합하고,
-      Pandoc 이 박아둔 <w:tblStyle w:val="Table"/> 을 번들의 앵커 styleId 로 치환.
-      <extract_out>/sample_table.xml 의 <w:tblLook> 를 복사해 firstRow/firstCol
-      조건부 서식을 활성화.
+      <extract_out>/table_style.xml 의 <w:style> 블록들을 출력 docx 의
+      word/styles.xml 에 병합하고, Pandoc 이 박아둔 <w:tblStyle w:val="Table"/>
+      을 앵커 styleId 로 치환. <extract_out>/table_sources.xml 의 <w:tblLook>
+      을 복사해 firstRow/firstCol 조건부 서식을 활성화.
 
   [3] (선택) --preview 렌더
       최종 docx → PDF → 페이지별 PNG (docx2pdf + PyMuPDF)
@@ -22,7 +21,7 @@
 입력:
   --md            .md 파일
   --extract-out   md2docx-extract-style 이 만든 디렉터리
-                  (base_templates/reference.docx, table_style_bundle/, sample_table.xml 필수)
+                  (base_templates/reference.docx, table_style.xml, table_sources.xml 필수)
   --out           출력 .docx 경로
 
 사용 예:
@@ -83,7 +82,7 @@ def read_anchor_and_tbllook(sample_xml: str) -> tuple[Optional[str], Optional[st
 
 
 def extract_tblpr_additions(sample_xml: str) -> dict:
-    """Pull propagatable <w:tblPr> children from sample_table.xml.
+    """Pull propagatable <w:tblPr> children from table_sources.xml.
 
     These bits live on each <w:tbl> (not in the style definition) and shape
     cell geometry — Pandoc doesn't emit them, so we have to copy from template.
@@ -124,7 +123,7 @@ def apply_tblpr_additions(tbl_body: str, additions: dict) -> str:
 
 
 def extract_cell_formatting(sample_xml: str) -> dict:
-    """Harvest representative cell-level formatting from sample_table.xml.
+    """Harvest representative cell-level formatting from table_sources.xml.
 
     Scans every <w:tc> in the sample and pulls the first non-trivial
     <w:pPr> / <w:rPr> found. The following children are **stripped** before
@@ -161,7 +160,7 @@ def overwrite_cell_formatting(tbl_body: str, cell_fmt: dict) -> tuple[str, int]:
     """Hard-overwrite every <w:tc>'s formatting with extracted sample.
 
     The user's intent: Pandoc's table formatting should be **erased entirely**
-    and replaced with what the template's sample_table.xml provides.  So:
+    and replaced with what the template's table_sources.xml provides.  So:
 
       - <w:tcPr>  → cleared to <w:tcPr/>            (table style's tcPr drives)
       - <w:pPr>   → replaced with sample pPr_inner  (or removed if none)
@@ -230,7 +229,7 @@ def retype_pandoc_tables(doc_xml: str, anchor: str,
     For every <w:tbl>:
       1) swap <w:tblStyle w:val="Table"/> → <w:tblStyle w:val="{anchor}"/>
       2) inject/refresh <w:tblLook> so firstRow/firstCol conditional formatting fires
-      3) propagate tblPr children from sample_table.xml (tblInd, tblCellMar, tblLayout)
+      3) propagate tblPr children from table_sources.xml (tblInd, tblCellMar, tblLayout)
       4) **hard-overwrite** every <w:tc>:
          - strip <w:tcPr>/<w:pPr>/<w:rPr> (including pandoc's Compact pStyle)
          - replace <w:pPr> / <w:rPr> with sample's harvested contents if any
@@ -293,13 +292,13 @@ def retype_pandoc_tables(doc_xml: str, anchor: str,
 
 
 # ---------- inject bundle into a docx ----------
-def inject_bundle(docx_path: str, styles_excerpt_path: str,
-                  sample_table_path: str) -> dict:
-    excerpt = open(styles_excerpt_path, encoding="utf-8").read()
-    sample = open(sample_table_path, encoding="utf-8").read()
-    anchor, tbllook = read_anchor_and_tbllook(sample)
+def inject_bundle(docx_path: str, table_style_path: str,
+                  table_sources_path: str) -> dict:
+    excerpt = open(table_style_path, encoding="utf-8").read()
+    sources = open(table_sources_path, encoding="utf-8").read()
+    anchor, tbllook = read_anchor_and_tbllook(sources)
     if not anchor:
-        raise SystemExit("no <w:tblStyle> in sample_table.xml — cannot determine anchor")
+        raise SystemExit("no <w:tblStyle> in table_sources.xml — cannot determine anchor")
 
     with zipfile.ZipFile(docx_path) as z:
         members = {n: z.read(n) for n in z.namelist()}
@@ -307,8 +306,8 @@ def inject_bundle(docx_path: str, styles_excerpt_path: str,
     doc_xml = members["word/document.xml"].decode("utf-8")
 
     donor = style_blocks_with_ids(excerpt)
-    tblpr_extras = extract_tblpr_additions(sample)
-    cell_fmt = extract_cell_formatting(sample)
+    tblpr_extras = extract_tblpr_additions(sources)
+    cell_fmt = extract_cell_formatting(sources)
     styles_xml = inject_styles(styles_xml, donor)
     doc_xml, touched, cells_overwritten = retype_pandoc_tables(
         doc_xml, anchor, tbllook, tblpr_extras, cell_fmt)
@@ -397,13 +396,12 @@ def main() -> int:
     args = ap.parse_args()
 
     ref_docx = os.path.join(args.extract_out, "base_templates", "reference.docx")
-    excerpt = os.path.join(args.extract_out, "table_style_bundle",
-                           "styles_excerpt.xml")
-    sample = os.path.join(args.extract_out, "sample_table.xml")
+    table_style = os.path.join(args.extract_out, "table_style.xml")
+    table_sources = os.path.join(args.extract_out, "table_sources.xml")
 
     for label, path in [("--md", args.md), ("reference.docx", ref_docx),
-                        ("styles_excerpt.xml", excerpt),
-                        ("sample_table.xml", sample)]:
+                        ("table_style.xml", table_style),
+                        ("table_sources.xml", table_sources)]:
         if not os.path.isfile(path):
             raise SystemExit(f"missing {label}: {path}")
 
@@ -415,7 +413,7 @@ def main() -> int:
     print(f"      -> {args.out}")
 
     print(f"[2/3] inject table style bundle")
-    meta = inject_bundle(args.out, excerpt, sample)
+    meta = inject_bundle(args.out, table_style, table_sources)
     print(f"      anchor styleId      : {meta['anchor']}")
     print(f"      donor styleIds      : {', '.join(meta['donor_style_ids']) or '-'}")
     print(f"      tblLook copied      : {meta['tbllook_copied']}")
@@ -426,7 +424,7 @@ def main() -> int:
 
     if args.preview:
         print(f"[3/3] render preview")
-        preview_dir = os.path.join(out_dir_of_out, "final_preview")
+        preview_dir = os.path.join(out_dir_of_out, "preview")
         pr = render_preview(args.out, preview_dir)
         if pr["engine"]:
             print(f"      engine              : {pr['engine']}")

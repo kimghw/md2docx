@@ -5,7 +5,7 @@ Each fixture targets a specific contract clause of the skill:
   fx_empty.docx        — no tables (② must be skipped)
   fx_tablegrid.docx    — single Table Grid (has_style_Table=false, chain resolves)
   fx_styled_Table.docx — same but styleId renamed to "Table" (has_style_Table=true)
-  fx_multi.docx        — 3 tables (sample-index selection)
+  fx_multi.docx        — 3 tables (sample-index selection for table_sources.xml)
 """
 from __future__ import annotations
 

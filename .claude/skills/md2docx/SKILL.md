@@ -1,6 +1,6 @@
 ---
 name: md2docx
-description: Markdown 한 파일을 Word docx 한 파일로 변환한다. 입력은 (1) .md 파일, (2) md2docx-extract-style 이 만든 디렉터리 (base_templates/reference.docx + table_style_bundle/ + sample_table.xml). Pandoc 으로 구조를 변환한 뒤, Pandoc 이 손대지 않은 **표 스타일을 후처리로 주입**해 최종 docx 를 만든다. `--preview` 로 PDF/PNG 프리뷰까지.
+description: Markdown 한 파일을 Word docx 한 파일로 변환한다. 입력은 (1) .md 파일, (2) md2docx-extract-style 이 만든 디렉터리 (base_templates/reference.docx + table_style.xml + table_sources.xml). Pandoc 으로 구조를 변환한 뒤, Pandoc 이 손대지 않은 **표 스타일을 후처리로 주입**해 최종 docx 를 만든다. `--preview` 로 PDF/PNG 프리뷰까지.
 ---
 
 # md2docx — md + 추출 번들 → 스타일 적용된 docx
@@ -10,7 +10,7 @@ description: Markdown 한 파일을 Word docx 한 파일로 변환한다. 입력
 ## 파이프라인 (3 단계)
 
 ```
-  [입력] .md  +  extract_out/{base_templates/reference.docx, table_style_bundle/, sample_table.xml}
+  [입력] .md  +  extract_out/{base_templates/reference.docx, table_style.xml, table_sources.xml}
                          │
          ┌───────────────┘
          ▼
@@ -19,12 +19,12 @@ description: Markdown 한 파일을 Word docx 한 파일로 변환한다. 입력
          - 표: 구조만 생성, <w:tblStyle w:val="Table"/> 리터럴만 박힘  ⚠️
          ▼
   [2] 표 스타일 주입
-         - styles_excerpt.xml 의 <w:style> 를 <out>/word/styles.xml 에 병합
+         - table_style.xml 의 <w:style> 를 <out>/word/styles.xml 에 병합
          - document.xml 의 <w:tblStyle w:val="Table"/> → <w:tblStyle w:val="{anchor}"/>
-         - sample_table.xml 의 <w:tblLook> 을 복사 (firstRow/firstCol 활성화)
+         - table_sources.xml 의 <w:tblLook> 을 복사 (firstRow/firstCol 활성화)
          ▼
   [3] (선택) --preview
-         - 최종 docx → PDF → 페이지별 PNG
+         - 최종 docx → PDF → 페이지별 PNG  (extract-style 의 preview/ 폴더에 final.* 로 누적)
 ```
 
 ## 사용
@@ -60,30 +60,30 @@ python .claude/skills/md2docx/transform.py \
 | 플래그 | 필수 | 의미 |
 |---|---|---|
 | `--md` | ✅ | 입력 Markdown 파일 |
-| `--extract-out` | ✅ | `md2docx-extract-style` 의 출력 디렉터리 |
+| `--extract-out` | ✅ | `md2docx-extract-style` 의 출력 디렉터리 (보통 `<out-dir>/<원본파일이름>/`) |
 | `--out` | ✅ | 출력 `.docx` 경로 (없는 상위 디렉터리는 자동 생성) |
-| `--preview` | - | 최종 docx 를 PDF + PNG 로 렌더해 `<out 부모>/final_preview/` 에 저장 |
+| `--preview` | - | 최종 docx 를 PDF + PNG 로 렌더해 `<out 부모>/preview/` 에 `final.*` 접두어로 저장 (extract-style 의 `source.*` 와 같은 폴더) |
 
 ## 선행 조건 — `--extract-out` 이 가져야 할 파일
 
 | 파일 | 출처 | 용도 |
 |---|---|---|
 | `base_templates/reference.docx` | extract-style ① | Pandoc `--reference-doc=` 입력 |
-| `table_style_bundle/styles_excerpt.xml` | extract-style ② | `<w:style>` 블록 (앵커 + basedOn 체인) |
-| `sample_table.xml` | extract-style ② | 앵커 styleId 와 `<w:tblLook>` 추출 |
+| `table_style.xml` | extract-style ② | `<w:style>` 블록 (앵커 + basedOn 체인, `<styles-excerpt>` 래퍼) |
+| `table_sources.xml` | extract-style ② | 앵커 styleId 와 `<w:tblLook>` 추출 |
 
 이 세 파일 중 하나라도 없으면 시작 전에 에러로 중단한다.
 
 ## 산출물
 
 ```
-<out 부모>/
+<out 부모>/                        ← 보통 extract-style 산출 폴더 = extract_out
 ├── <out>                          ← 주입까지 끝난 최종 docx
-└── final_preview/                 ← --preview 시에만
+└── preview/                       ← --preview 시 (extract-style 의 preview/ 와 같은 위치)
     ├── final.pdf
     ├── final.page-01.png          ← 200 dpi
     ├── final.page-02.png
-    └── ...
+    └── ...                        ← 같은 폴더에 source.* (extract-style) 도 함께 누적
 ```
 
 ## 원리 핵심 3가지
