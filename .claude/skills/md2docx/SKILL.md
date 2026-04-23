@@ -24,7 +24,7 @@ description: Markdown 한 파일을 Word docx 한 파일로 변환한다. 입력
          - table_sources.xml 의 <w:tblLook> 을 복사 (firstRow/firstCol 활성화)
          ▼
   [3] (선택) --preview
-         - 최종 docx → PDF → 페이지별 PNG  (extract-style 의 preview/ 폴더에 final.* 로 누적)
+         - 최종 docx → PDF → 페이지별 PNG  (preview/ 폴더에 <out basename>.* 로 누적)
 ```
 
 ## 사용
@@ -33,7 +33,7 @@ description: Markdown 한 파일을 Word docx 한 파일로 변환한다. 입력
 python .claude/skills/md2docx/transform.py \
   --md          test.md \
   --extract-out extracted_output/reference_reg/ \
-  --out         extracted_output/reference_reg/final.docx
+  --out         extracted_output/reference_reg/converted_test.docx
 ```
 
 PowerShell:
@@ -42,7 +42,7 @@ PowerShell:
 python .claude\skills\md2docx\transform.py `
   --md          test.md `
   --extract-out extracted_output\reference_reg\ `
-  --out         extracted_output\reference_reg\final.docx
+  --out         extracted_output\reference_reg\converted_test.docx
 ```
 
 프리뷰까지:
@@ -51,7 +51,7 @@ python .claude\skills\md2docx\transform.py `
 python .claude/skills/md2docx/transform.py \
   --md          test.md \
   --extract-out extracted_output/reference_reg/ \
-  --out         extracted_output/reference_reg/final.docx \
+  --out         extracted_output/reference_reg/converted_test.docx \
   --preview
 ```
 
@@ -61,8 +61,8 @@ python .claude/skills/md2docx/transform.py \
 |---|---|---|
 | `--md` | ✅ | 입력 Markdown 파일 |
 | `--extract-out` | ✅ | `md2docx-extract-style` 의 출력 디렉터리 (보통 `<out-dir>/<원본파일이름>/`) |
-| `--out` | ✅ | 출력 `.docx` 경로 (없는 상위 디렉터리는 자동 생성) |
-| `--preview` | - | 최종 docx 를 PDF + PNG 로 렌더해 `<out 부모>/preview/` 에 `final.*` 접두어로 저장 (extract-style 의 `source.*` 와 같은 폴더) |
+| `--out` | ✅ | 출력 `.docx` 경로 (없는 상위 디렉터리는 자동 생성). 관례: `<extract-out>/converted_<md-basename>.docx` |
+| `--preview` | - | 최종 docx 를 PDF + PNG 로 렌더해 `<out 부모>/preview/` 에 `<out basename>.*` 접두어로 저장 (extract-style 의 `source.*` 와 같은 폴더) |
 
 ## 선행 조건 — `--extract-out` 이 가져야 할 파일
 
@@ -77,13 +77,13 @@ python .claude/skills/md2docx/transform.py \
 ## 산출물
 
 ```
-<out 부모>/                        ← 보통 extract-style 산출 폴더 = extract_out
-├── <out>                          ← 주입까지 끝난 최종 docx
-└── preview/                       ← --preview 시 (extract-style 의 preview/ 와 같은 위치)
-    ├── final.pdf
-    ├── final.page-01.png          ← 200 dpi
-    ├── final.page-02.png
-    └── ...                        ← 같은 폴더에 source.* (extract-style) 도 함께 누적
+<out 부모>/                              ← 보통 extract-style 산출 폴더 = extract_out
+├── converted_<md-basename>.docx        ← 주입까지 끝난 최종 docx (관례적 파일명)
+└── preview/                            ← --preview 시 (extract-style 의 preview/ 와 같은 위치)
+    ├── converted_<md-basename>.pdf
+    ├── converted_<md-basename>.page-01.png   ← 200 dpi
+    ├── converted_<md-basename>.page-02.png
+    └── ...                             ← 같은 폴더에 source.* (extract-style) 도 함께 누적
 ```
 
 ## 원리 핵심 3가지

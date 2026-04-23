@@ -333,7 +333,8 @@ def inject_bundle(docx_path: str, table_style_path: str,
 # ---------- preview render (optional) ----------
 def render_preview(docx_path: str, out_dir: str) -> dict:
     os.makedirs(out_dir, exist_ok=True)
-    pdf = os.path.join(out_dir, "final.pdf")
+    stem = os.path.splitext(os.path.basename(docx_path))[0]
+    pdf = os.path.join(out_dir, f"{stem}.pdf")
     result = {"engine": None, "pdf": None, "pngs": [], "note": None}
     # try docx2pdf then soffice
     try:
@@ -375,7 +376,7 @@ def render_preview(docx_path: str, out_dir: str) -> dict:
         matrix = fitz.Matrix(zoom, zoom)
         for i in range(doc.page_count):
             pix = doc.load_page(i).get_pixmap(matrix=matrix, alpha=False)
-            p = os.path.join(out_dir, f"final.page-{i + 1:02d}.png")
+            p = os.path.join(out_dir, f"{stem}.page-{i + 1:02d}.png")
             pix.save(p)
             result["pngs"].append(p)
     finally:
