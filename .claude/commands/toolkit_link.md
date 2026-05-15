@@ -27,6 +27,11 @@ allowed-tools: Bash, Read, Glob, AskUserQuestion
 | 실파일/실디렉토리 | 있음 | **conflict**: 양쪽 존재 → 사용자 확인 후 선택 |
 | 없음 | 없음 | **error**: 경로 없음 보고 |
 
+### 제외 대상 (항상 처리하지 않음)
+
+- **`settings.local.json`**: 프로젝트별 로컬 설정(권한 허용 목록 등)으로, 소비자 프로젝트마다 내용이 달라야 한다. 어떤 모드(pull/promote/conflict/`all`/인터랙티브)에서도 **링크·이동·복사 대상에서 영구 제외**한다. 사용자가 명시적으로 `settings.local.json`을 인자로 넘기더라도 처리하지 말고 "제외 대상" 사유와 함께 스킵 보고만 한다.
+- **`.gitignore`, `settings.json`**(존재 시): 위와 동일하게 프로젝트별 설정이므로 제외.
+
 ## 동작 규칙
 
 1. **사전 점검**
@@ -35,6 +40,7 @@ allowed-tools: Bash, Read, Glob, AskUserQuestion
    - 소비자 프로젝트의 `.claude/`는 일반적으로 소비자 `.gitignore`에 등록되어 소비자 레포에 커밋되지 않음을 전제로 함. (toolkit 원본 레포에서는 `.claude/`가 트래킹 대상.)
 
 2. **인자 해석**
+   - **`help` / `-h` / `--help`**: 본 명령이 받는 인자(인자 없음/`all`/구체 경로/`unlink ...`/`status` 등)와 각 동작 설명을 요약 출력하고 종료 (파일시스템 변경 없음).
    - **인자 없음**: **인터랙티브 선택 모드** (아래 2-1 참조) — `agents/`, `commands/`, `skills/` 하위 항목을 카테고리별로 나열하고 `AskUserQuestion`으로 선택받는다.
    - **`all`**: 최상위 3개(`agents`, `commands`, `skills`)를 `.claude/`에 디렉토리 단위로 **pull-link**.
    - **구체 경로**(예: `references`, `skills/pdf2md`, `commands/git.md`): 위 상태표에 따라 **모드 자동 판별**.

@@ -19,3 +19,6 @@ __pycache__/
 
 # generated outputs
 extracted_output/
+
+# Claude Code agent worktrees
+.claude/worktrees/
